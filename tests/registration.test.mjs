@@ -33,23 +33,39 @@ function fakeDB() {
   };
 }
 
+// Stand-in for Cloudflare's siteverify endpoint: the token 'pass' succeeds.
+const realFetch = globalThis.fetch;
+const verifyCalls = [];
+globalThis.fetch = async (url, init) => {
+  if (String(url) !== 'https://challenges.cloudflare.com/turnstile/v0/siteverify') return realFetch(url, init);
+  const form = init.body;
+  verifyCalls.push({ secret: form.get('secret'), response: form.get('response'), remoteip: form.get('remoteip') });
+  if (form.get('response') === 'down') throw new Error('network');
+  const success = form.get('response') === 'pass' && form.get('secret') === 'turnstile-secret';
+  return Response.json({ success, hostname: form.get('response') === 'pass' ? 'proofstreamapp.com' : undefined });
+};
+
 function envWith(overrides = {}) {
   const calls = [];
   return {
     calls,
     DB: fakeDB(),
     SESSION_SECRET: 'test-secret-value',
+    TURNSTILE_SECRET: 'turnstile-secret',
     REGISTRATION_OPEN: 'true',
     ASSETS: { fetch: async req => { calls.push(new URL(req.url).pathname); return new Response('asset:' + new URL(req.url).pathname, { headers: { 'content-type': 'text/html' } }); } },
     ...overrides,
   };
 }
 
-const post = (body, { origin: from = origin, type = 'application/json' } = {}) => new Request(origin + '/api/register', {
-  method: 'POST',
-  headers: { origin: from, 'content-type': type },
-  body: type === 'application/json' ? JSON.stringify(body) : new URLSearchParams(body),
-});
+const post = (body, { origin: from = origin, type = 'application/json', token = 'pass' } = {}) => {
+  const withToken = token === null ? body : { 'cf-turnstile-response': token, ...body };
+  return new Request(origin + '/api/register', {
+    method: 'POST',
+    headers: { origin: from, 'content-type': type, 'cf-connecting-ip': '203.0.113.7' },
+    body: type === 'application/json' ? JSON.stringify(withToken) : new URLSearchParams(withToken),
+  });
+};
 const get = (path, cookie) => new Request(origin + path, { headers: cookie ? { cookie } : {} });
 const cookieOf = response => response.headers.get('set-cookie')?.split(';')[0];
 
@@ -104,6 +120,24 @@ test('rejects invalid input, cross-origin posts and missing configuration', asyn
   assert.equal((await worker.fetch(noOrigin, env)).status, 403);
   assert.equal((await worker.fetch(post({ name: 'Ada', email: 'ada@example.com' }), envWith({ DB: undefined }))).status, 503);
   assert.equal(env.DB.rows.size, 0);
+});
+
+test('Turnstile must pass for new and returning registrants, and fails closed', async () => {
+  const env = envWith();
+  verifyCalls.length = 0;
+  const ok = await worker.fetch(post({ name: 'Ada', email: 'ada@example.com' }), env);
+  assert.equal(ok.status, 201);
+  assert.deepEqual(verifyCalls[0], { secret: 'turnstile-secret', response: 'pass', remoteip: '203.0.113.7' });
+  for (const token of [null, '', 'fail', 'down', 'x'.repeat(3000)]) {
+    const blocked = await worker.fetch(post({ name: 'Ada', email: 'ada@example.com' }, { token }), env);
+    assert.equal(blocked.status, 403, `token ${String(token).slice(0, 10)}`);
+    assert.equal(blocked.headers.get('set-cookie'), null);
+  }
+  const newcomer = await worker.fetch(post({ name: 'Bo', email: 'bo@example.com' }, { token: 'fail' }), env);
+  assert.equal(newcomer.status, 403);
+  assert.equal(env.DB.rows.size, 1);
+  const noSecret = await worker.fetch(post({ name: 'Cy', email: 'cy@example.com' }), envWith({ TURNSTILE_SECRET: undefined }));
+  assert.equal(noSecret.status, 503);
 });
 
 test('honeypot submissions get a quiet 200 with no row and no cookie', async () => {

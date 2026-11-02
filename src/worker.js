@@ -10,22 +10,34 @@ const GATED_PATHS = new Set(['/', '/index.html', '/app.js']);
 const REGISTER_PAGE = '/register';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// No third-party origins, inline scripts, eval, fonts or analytics are needed.
-// The waveform uses static CSS classes, so inline style blocks and attributes
-// can both remain disabled.
-const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "base-uri 'none'",
-  "frame-ancestors 'none'",
-  "object-src 'none'",
-  "form-action 'self'",
-  "script-src 'self'",
-  "style-src 'self'",
-  "style-src-attr 'none'",
-  "img-src 'self'",
-  "font-src 'self'",
-  "connect-src 'self'",
-].join('; ');
+// Turnstile (the sign-up bot check) is the only third-party origin.
+const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
+const TURNSTILE_VERIFY_URL = TURNSTILE_ORIGIN + '/turnstile/v0/siteverify';
+
+// Our own scripts are files on 'self'. Cloudflare's bot detection injects an inline
+// script into HTML pages and copies the nonce it finds in this header onto it, so
+// every response gets a fresh nonce. The waveform uses static CSS classes, so inline
+// style blocks and attributes stay disabled.
+function contentSecurityPolicy(nonce) {
+  return [
+    "default-src 'self'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "form-action 'self'",
+    `script-src 'self' 'nonce-${nonce}' ${TURNSTILE_ORIGIN}`,
+    `frame-src ${TURNSTILE_ORIGIN}`,
+    "style-src 'self'",
+    "style-src-attr 'none'",
+    "img-src 'self'",
+    "font-src 'self'",
+    "connect-src 'self'",
+  ].join('; ');
+}
+
+function newNonce() {
+  return base64url(crypto.getRandomValues(new Uint8Array(16)));
+}
 
 function secureResponse(response, request) {
   // Copy rather than replace asset headers: content-type, etag and caching survive.
@@ -35,7 +47,7 @@ function secureResponse(response, request) {
   headers.set('x-frame-options', 'DENY');
   headers.set('referrer-policy', 'strict-origin-when-cross-origin');
   headers.set('permissions-policy', 'camera=(), microphone=(), geolocation=()');
-  headers.set('content-security-policy', CONTENT_SECURITY_POLICY);
+  headers.set('content-security-policy', contentSecurityPolicy(newNonce()));
   if (new URL(request.url).hostname !== CANONICAL_HOST) {
     headers.set('x-robots-tag', 'noindex, nofollow');
   }
@@ -103,11 +115,28 @@ async function readSubmission(request) {
   return null;
 }
 
+// Every sign-in or sign-up must carry a Turnstile token that Cloudflare confirms.
+// A missing secret fails closed, like a missing session secret.
+async function passedTurnstile(request, env, token) {
+  if (!token || typeof token !== 'string' || token.length > 2048) return false;
+  const form = new FormData();
+  form.append('secret', env.TURNSTILE_SECRET);
+  form.append('response', token);
+  const ip = request.headers.get('cf-connecting-ip');
+  if (ip) form.append('remoteip', ip);
+  try {
+    const result = await (await fetch(TURNSTILE_VERIFY_URL, { method: 'POST', body: form })).json();
+    return result.success === true && (!result.hostname || result.hostname === CANONICAL_HOST);
+  } catch {
+    return false;
+  }
+}
+
 async function register(request, env) {
   if (request.headers.get('origin') !== CANONICAL_ORIGIN) {
     return json({ error: 'Cross-origin registration is not allowed.' }, 403);
   }
-  if (!env.DB || !env.SESSION_SECRET) {
+  if (!env.DB || !env.SESSION_SECRET || !env.TURNSTILE_SECRET) {
     return json({ error: 'Registration is temporarily unavailable.' }, 503);
   }
   let body;
@@ -116,6 +145,10 @@ async function register(request, env) {
 
   // Bots fill every field; people never see this one. Answer as if it worked, set nothing.
   if (body.website) return json({ ok: true }, 200);
+
+  if (!(await passedTurnstile(request, env, body['cf-turnstile-response']))) {
+    return json({ error: 'The bot check did not pass. Please complete it and try again.' }, 403);
+  }
 
   const email = String(body.email ?? '').trim().toLowerCase();
   const name = String(body.name ?? '').trim();
