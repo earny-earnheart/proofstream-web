@@ -12,6 +12,15 @@
     "run_worker_first": true,
     "not_found_handling": "404-page"
   },
+  "vars": { "REGISTRATION_OPEN": "true" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "proofstream-registrations",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
   "routes": [
     { "pattern": "proofstreamapp.com", "custom_domain": true },
     { "pattern": "www.proofstreamapp.com", "custom_domain": true }

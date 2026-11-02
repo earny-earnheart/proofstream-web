@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#5146d8"><meta name="description" content="Register to open the ProofStream creator workspace."><title>ProofStream — Register</title><link rel="canonical" href="https://proofstreamapp.com/"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="alternate icon" href="/favicon.ico"><link rel="stylesheet" href="/styles.css"></head><body class="register-body">
+<main class="register-shell" id="main">
+<a href="/" class="brand"><span class="brandmark">p<span>≈</span></span>ProofStream</a>
+<form class="panel register-panel" id="register-form" method="post" action="/api/register" novalidate>
+<span class="eyebrow">CREATOR WORKSPACE</span>
+<h1>Register to get started.</h1>
+<p class="form-note">Tell us who you are to open your workspace. Already registered? Use the same email to sign back in on this device.</p>
+<label>Name<input name="name" id="register-name" autocomplete="name" maxlength="100" required></label>
+<label>Email<input name="email" id="register-email" type="email" autocomplete="email" maxlength="254" required></label>
+<label class="hp" aria-hidden="true">Website<input name="website" tabindex="-1" autocomplete="off"></label>
+<button type="submit" class="primary full">Open my workspace ↗</button>
+<p class="form-error" role="alert"></p>
+<div class="notice">Your name and email are stored by ProofStream to manage access. Files you fingerprint still stay on your device.</div>
+</form>
+</main>
+<script src="/register.js" defer></script>
+</body></html>

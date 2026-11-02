@@ -23,7 +23,7 @@ function secure(response) {
 
 test('serves assets and preserves content type, etag, cache and body', async () => {
   const env = envWith();
-  const response = await worker.fetch(request(), env);
+  const response = await worker.fetch(request('/styles.css'), env);
   assert.equal(response.status, 200);
   assert.equal(await response.text(), 'ProofStream');
   assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8');

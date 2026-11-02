@@ -33,9 +33,11 @@ fetch_url() {
 }
 header_matches() { grep -Eiq "$1" "$HEADERS"; }
 
-if fetch_url "$ORIGIN/" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Your work. Your timeline.</title>' "$BODY"; then
-  report PASS 'Homepage returns 200 and the new ProofStream title'
-else report FAIL "Homepage content (HTTP $STATUS)"; fi
+# Without a session cookie, / must show the registration page, never the workspace.
+if fetch_url "$ORIGIN/" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Register</title>' "$BODY" \
+    && grep -Fq 'id="register-form"' "$BODY"; then
+  report PASS 'Homepage registration gate: unregistered visitors see the sign-up form'
+else report FAIL "Homepage registration gate (HTTP $STATUS)"; fi
 
 if header_matches '^strict-transport-security:[[:space:]]*max-age=31536000; includeSubDomains[[:space:]]*$' \
     && header_matches '^content-security-policy:' \
@@ -72,6 +74,16 @@ for asset in favicon.ico favicon.svg; do
     report PASS "$asset: 200 and non-empty"
   else report FAIL "$asset (HTTP $STATUS)"; fi
 done
+
+if fetch_url "$ORIGIN/app.js" && [[ "$STATUS" == 403 ]]; then
+  report PASS 'app.js is withheld from unregistered visitors (403)'
+else report FAIL "app.js registration gate (HTTP $STATUS)"; fi
+
+if fetch_url "$ORIGIN/api/session" && [[ "$STATUS" == 200 ]] \
+    && header_matches '^cache-control:[[:space:]]*no-store[[:space:]]*$' \
+    && grep -Eq '"registered"[[:space:]]*:[[:space:]]*false' "$BODY"; then
+  report PASS 'api/session reports an anonymous visitor as unregistered'
+else report FAIL "api/session (HTTP $STATUS)"; fi
 
 if fetch_url "$ORIGIN/health" && [[ "$STATUS" == 200 ]] \
     && header_matches '^content-type:[[:space:]]*application/json([;[:space:]]|$)' \

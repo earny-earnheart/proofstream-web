@@ -19,6 +19,25 @@ not statutory notarial acts. Records stored under the previous chatgpt.site host
 will not automatically appear on proofstreamapp.com: export them before switching.
 The current concept exports records but does not yet import them.
 
+## Registration gate
+
+`/`, `/index.html` and `/app.js` require a signed `ps_reg` cookie. Without one, `/` serves
+`public/register.html` and `/app.js` returns 403. `POST /api/register` (same-origin only)
+validates name/email, stores the creator in D1 `proofstream-registrations` and sets the
+cookie (HttpOnly, Secure, SameSite=Lax, 1 year). Repeat emails sign back in. `GET
+/api/session` reports `{registered, registrationOpen}`. Set `REGISTRATION_OPEN` to
+`"false"` in `wrangler.jsonc` to close new sign-ups; existing registrants still get in.
+The cookie is signed with the `SESSION_SECRET` secret; without it, everyone stays gated.
+
+One-time setup before the first deploy with the gate:
+```sh
+npx wrangler@latest d1 create proofstream-registrations   # paste database_id into wrangler.jsonc
+npx wrangler@latest d1 migrations apply proofstream-registrations --remote
+npx wrangler@latest secret put SESSION_SECRET             # paste a long random value, e.g. openssl rand -hex 32
+```
+Local testing: put `SESSION_SECRET=...` in `.dev.vars` (gitignored), then
+`npx wrangler@latest d1 migrations apply proofstream-registrations --local` and `npx wrangler@latest dev`.
+
 ## Deployment target and routing
 
 - Account: Pantheon Enterprise, `7914583bf80f67154ca9364681c0af85`.
