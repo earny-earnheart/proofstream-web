@@ -113,15 +113,22 @@ test('non-canonical hosts are noindexed and asset failures receive secure 502 re
   secure(error);
 });
 
-test('CSP permits no remote origins, eval or inline scripts', async () => {
+test('CSP allows only Turnstile remotely, no eval or unsafe-inline, and a fresh nonce per response', async () => {
   const response = await worker.fetch(request(), envWith());
   const CONTENT_SECURITY_POLICY = response.headers.get('content-security-policy');
+  const nonceOf = csp => csp.match(/'nonce-([A-Za-z0-9_-]{22})'/)?.[1];
+  assert(nonceOf(CONTENT_SECURITY_POLICY));
+  const second = (await worker.fetch(request(), envWith())).headers.get('content-security-policy');
+  assert.notEqual(nonceOf(second), nonceOf(CONTENT_SECURITY_POLICY));
+  assert(CONTENT_SECURITY_POLICY.includes('frame-src https://challenges.cloudflare.com'));
+  const remote = CONTENT_SECURITY_POLICY.match(/https:\/\/[^\s;']+/g);
+  assert.deepEqual([...new Set(remote)], ['https://challenges.cloudflare.com']);
   assert(CONTENT_SECURITY_POLICY.includes("script-src 'self'"));
   assert(CONTENT_SECURITY_POLICY.includes("style-src 'self'"));
   assert(CONTENT_SECURITY_POLICY.includes("style-src-attr 'none'"));
   assert(!CONTENT_SECURITY_POLICY.includes('unsafe-eval'));
   assert(!CONTENT_SECURITY_POLICY.includes('unsafe-inline'));
-  assert(!CONTENT_SECURITY_POLICY.includes('https:'));
+  assert(!/https:(?!\/\/challenges\.cloudflare\.com)/.test(CONTENT_SECURITY_POLICY));
 });
 
 test('deployment configuration preserves the existing worker, account and only two custom domains', async () => {

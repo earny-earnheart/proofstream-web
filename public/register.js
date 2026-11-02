@@ -12,6 +12,10 @@ form.addEventListener('submit', async e => {
   e.preventDefault();
   error.textContent = '';
   if (!form.reportValidity()) return;
+  if (!new FormData(form).get('cf-turnstile-response')) {
+    error.textContent = 'Please wait for the bot check to finish, then try again.';
+    return;
+  }
   button.disabled = true;
   try {
     const response = await fetch('/api/register', {
@@ -25,6 +29,8 @@ form.addEventListener('submit', async e => {
     location.replace('/');
   } catch (err) {
     error.textContent = err.message;
+    // Turnstile tokens work once; get a fresh one for the next attempt.
+    if (window.turnstile) window.turnstile.reset();
   } finally {
     button.disabled = false;
   }
