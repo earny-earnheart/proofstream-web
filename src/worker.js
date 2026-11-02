@@ -73,17 +73,24 @@ function readCookie(request, name) {
   return null;
 }
 
-// A missing secret fails closed: nobody is treated as registered.
+// The signed payload is `<id>.<issued-at seconds>`. A missing secret or database fails
+// closed, cookies expire server-side, and deleting a registration row revokes access.
 async function isRegistered(request, env) {
   const value = readCookie(request, COOKIE_NAME);
-  if (!value || !env.SESSION_SECRET) return false;
+  if (!value || !env.SESSION_SECRET || !env.DB) return false;
   const dot = value.lastIndexOf('.');
   if (dot < 1) return false;
-  return sameString(value.slice(dot + 1), await hmac(env.SESSION_SECRET, value.slice(0, dot)));
+  const payload = value.slice(0, dot);
+  if (!sameString(value.slice(dot + 1), await hmac(env.SESSION_SECRET, payload))) return false;
+  const [id, issuedAt] = payload.split('.');
+  const age = Math.floor(Date.now() / 1000) - Number(issuedAt);
+  if (!id || !Number.isInteger(Number(issuedAt)) || age < 0 || age > COOKIE_MAX_AGE) return false;
+  return Boolean(await env.DB.prepare('SELECT id FROM registrations WHERE id = ?').bind(id).first());
 }
 
 async function sessionCookie(env, id) {
-  const value = `${id}.${await hmac(env.SESSION_SECRET, id)}`;
+  const payload = `${id}.${Math.floor(Date.now() / 1000)}`;
+  const value = `${payload}.${await hmac(env.SESSION_SECRET, payload)}`;
   return `${COOKIE_NAME}=${value}; Max-Age=${COOKIE_MAX_AGE}; Path=/; HttpOnly; Secure; SameSite=Lax`;
 }
 

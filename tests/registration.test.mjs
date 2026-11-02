@@ -15,7 +15,9 @@ function fakeDB() {
         bind(...args) {
           return {
             async first() {
-              const row = rows.get(args[0]);
+              const row = /WHERE id = \?/.test(sql)
+                ? [...rows.values()].find(r => r.id === args[0])
+                : rows.get(args[0]);
               return row ? { id: row.id } : null;
             },
             async run() {
@@ -86,7 +88,8 @@ test('form-encoded submissions work and duplicate emails sign back in with 200',
   const again = await worker.fetch(post({ name: 'Someone else', email: 'ADA@example.com' }), env);
   assert.equal(again.status, 200);
   assert.equal((await again.json()).returning, true);
-  assert.equal(cookieOf(again), cookieOf(first));
+  const idOf = response => cookieOf(response).split('=')[1].split('.')[0];
+  assert.equal(idOf(again), idOf(first));
   assert.equal(env.DB.rows.size, 1);
 });
 
@@ -132,6 +135,30 @@ test('tampered, foreign-secret or secretless cookies stay gated', async () => {
   assert.equal(await (await worker.fetch(get('/', 'ps_reg=garbage'), env)).text(), 'asset:/register');
   assert.equal(await (await worker.fetch(get('/', cookie), envWith({ SESSION_SECRET: 'other' }))).text(), 'asset:/register');
   assert.equal(await (await worker.fetch(get('/', cookie), envWith({ SESSION_SECRET: undefined }))).text(), 'asset:/register');
+});
+
+test('deleting a registration revokes its cookie, and expired or future-dated cookies are refused', async () => {
+  const env = envWith();
+  const cookie = cookieOf(await worker.fetch(post({ name: 'Ada', email: 'ada@example.com' }), env));
+  assert.equal(await (await worker.fetch(get('/', cookie), env)).text(), 'asset:/');
+  env.DB.rows.delete('ada@example.com');
+  assert.equal(await (await worker.fetch(get('/', cookie), env)).text(), 'asset:/register');
+  assert.equal((await (await worker.fetch(get('/api/session', cookie), env)).json()).registered, false);
+
+  // Forge correctly signed cookies with out-of-range issue times.
+  const fresh = envWith();
+  await worker.fetch(post({ name: 'Bo', email: 'bo@example.com' }), fresh);
+  const id = fresh.DB.rows.get('bo@example.com').id;
+  const sign = async payload => {
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(fresh.SESSION_SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const mac = Buffer.from(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))).toString('base64url');
+    return `ps_reg=${payload}.${mac}`;
+  };
+  const now = Math.floor(Date.now() / 1000);
+  assert.equal(await (await worker.fetch(get('/', await sign(`${id}.${now - 60}`)), fresh)).text(), 'asset:/');
+  assert.equal(await (await worker.fetch(get('/', await sign(`${id}.${now - 366 * 86400}`)), fresh)).text(), 'asset:/register');
+  assert.equal(await (await worker.fetch(get('/', await sign(`${id}.${now + 3600}`)), fresh)).text(), 'asset:/register');
+  assert.equal(await (await worker.fetch(get('/', await sign(id)), fresh)).text(), 'asset:/register');
 });
 
 test('other write methods and paths remain 405', async () => {

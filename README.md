@@ -27,7 +27,7 @@ validates name/email, stores the creator in D1 `proofstream-registrations` and s
 cookie (HttpOnly, Secure, SameSite=Lax, 1 year). Repeat emails sign back in. `GET
 /api/session` reports `{registered, registrationOpen}`. Set `REGISTRATION_OPEN` to
 `"false"` in `wrangler.jsonc` to close new sign-ups; existing registrants still get in.
-The cookie is signed with the `SESSION_SECRET` secret; without it, everyone stays gated.
+The cookie carries a signed issue time (checked server-side, 1-year limit) and is signed with the `SESSION_SECRET` secret; without it, everyone stays gated. To revoke someone, delete their row: `npx wrangler@latest d1 execute proofstream-registrations --remote --command "DELETE FROM registrations WHERE email = 'person@example.com'"`.
 
 One-time setup before the first deploy with the gate:
 ```sh
