@@ -6,18 +6,37 @@ All assets are local and included under `public/`.
 
 ## What works today
 
-Projects, milestones, browser-local SHA-256 fingerprinting, creator-specific local
-verification, JSON record exports, category filtering, project search and optional
-wallet-address connection. Files are read locally and are never uploaded. Connecting
-a wallet does not request a signature or transaction.
+Projects, milestones, SHA-256 fingerprinting in the browser, creator-specific
+verification, JSON record exports, category filtering, project search, sign-out and
+optional wallet-address connection. Files are read locally and are never uploaded.
+Connecting a wallet does not request a signature or transaction.
 
-This concept uses browser-local storage and the device clock. It does not provide
-shared accounts, database storage, independent witnesses, blockchain registration,
-pinning, identity registration, payments or a bond offering. Examples are labeled.
-Cryptographic attestation and blockchain anchoring are in development; these are
-not statutory notarial acts. Records stored under the previous chatgpt.site hostname
-will not automatically appear on proofstreamapp.com: export them before switching.
-The current concept exports records but does not yet import them.
+Projects are saved to the creator's account (see "Project storage"), so they appear on
+every device the creator signs in from and are invisible to other accounts. Timestamps
+come from the device clock. There are no independent witnesses, blockchain
+registration, pinning, identity registration, payments or a bond offering. Examples
+are labeled. Cryptographic attestation and blockchain anchoring are in development;
+these are not statutory notarial acts. Records stored under the previous chatgpt.site
+hostname will not automatically appear on proofstreamapp.com: export them before
+switching. The current concept exports records but does not yet import them.
+
+## Project storage
+
+`GET /api/projects` lists the signed-in creator's projects; `PUT /api/projects/<id>`
+(same-origin, JSON, up to 512 KB) creates or replaces one. Both answer 401 without a
+valid `ps_reg` cookie, and every query is scoped to the registration id inside that
+signed cookie, so one account cannot read or overwrite another's projects, even with
+the same project id. The Worker rebuilds each project from an allow-list (name,
+category, description, dates, and per milestone: title, stage, creator, file name,
+file size and SHA-256), so file contents cannot be stored whatever a client sends.
+Limits: 500 projects per account, 2,000 milestones per project. Rows live in the D1
+`projects` table (`migrations/0002_projects.sql`) and are deleted with their
+registration. `POST /api/logout` (same-origin) clears the cookie.
+
+Records saved by the earlier browser-only preview (localStorage key
+`proofstream-studio-v1`) move into the account on the first load after sign-in, then
+the local copy is removed. On a browser shared by several creators, the first one to
+sign in receives them.
 
 ## Registration gate
 
@@ -30,7 +49,7 @@ cookie (HttpOnly, Secure, SameSite=Lax, 1 year). Repeat emails sign back in. `GE
 The cookie carries a signed issue time (checked server-side, 1-year limit) and is signed with the `SESSION_SECRET` secret; without it, everyone stays gated. Every sign-up and sign-back-in must also pass Cloudflare Turnstile (widget sitekey
 `0x4AAAAAAFxNFLyzIiuPb_D6`, in `public/register.html`). The Worker checks each token with
 Cloudflare's siteverify using the `TURNSTILE_SECRET` secret; without that secret,
-registration returns 503 "temporarily unavailable" (it fails closed). To revoke someone, delete their row: `npx wrangler@latest d1 execute proofstream-registrations --remote --command "DELETE FROM registrations WHERE email = 'person@example.com'"`.
+registration returns 503 "temporarily unavailable" (it fails closed). To revoke someone, delete their row (their projects are deleted with it): `npx wrangler@latest d1 execute proofstream-registrations --remote --command "DELETE FROM registrations WHERE email = 'person@example.com'"`.
 
 One-time setup before the first deploy with the gate:
 ```sh
@@ -42,9 +61,15 @@ npx wrangler@latest secret list                           # names only: expect S
 ```
 Run secret commands from this folder so they reach `proofstream-web` in the Pantheon
 Enterprise account. Piping from the clipboard avoids saving an empty value from the hidden prompt.
+Before deploying a release that adds a migration, apply it remotely first:
+`npx wrangler@latest d1 migrations apply proofstream-registrations --remote`.
 Local testing: put `SESSION_SECRET=...` and Cloudflare's always-pass test secret
 `TURNSTILE_SECRET=1x0000000000000000000000000000000AA` in `.dev.vars` (gitignored), then
 `npx wrangler@latest d1 migrations apply proofstream-registrations --local` and `npx wrangler@latest dev`.
+Cloudflare's test secret reports the hostname `example.com`, which the Worker rejects,
+and same-origin checks expect `https://proofstreamapp.com`. So a local browser cannot
+sign up or save. Seed a row in the local D1 and send requests with that origin header
+(as `tests/projects.test.mjs` does) to exercise the API locally.
 
 ## Deployment target and routing
 

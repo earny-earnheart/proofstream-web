@@ -6,3 +6,4 @@
 footer{flex-wrap:wrap}footer .company{flex-basis:100%;font-size:10px}
 /* Registration gate */
 .register-body{display:block;min-height:100vh}.register-shell{margin:0 auto;max-width:460px;padding:48px 16px;display:flex;flex-direction:column;gap:24px;min-height:100vh;justify-content:center}.register-panel{display:flex;flex-direction:column;gap:14px}.register-panel h1{margin:0;font-size:28px;line-height:1.15}.hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
+.profile .text-button{margin-left:auto;white-space:nowrap}

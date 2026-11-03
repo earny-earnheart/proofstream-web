@@ -85,6 +85,11 @@ if fetch_url "$ORIGIN/api/session" && [[ "$STATUS" == 200 ]] \
   report PASS 'api/session reports an anonymous visitor as unregistered'
 else report FAIL "api/session (HTTP $STATUS)"; fi
 
+if fetch_url "$ORIGIN/api/projects" && [[ "$STATUS" == 401 ]] \
+    && header_matches '^cache-control:[[:space:]]*no-store[[:space:]]*$'; then
+  report PASS 'api/projects refuses anonymous visitors (401, no-store)'
+else report FAIL "api/projects must require a session (HTTP $STATUS)"; fi
+
 if fetch_url "$ORIGIN/health" && [[ "$STATUS" == 200 ]] \
     && header_matches '^content-type:[[:space:]]*application/json([;[:space:]]|$)' \
     && header_matches '^cache-control:[[:space:]]*no-store[[:space:]]*$' \

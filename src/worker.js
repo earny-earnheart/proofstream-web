@@ -87,18 +87,22 @@ function readCookie(request, name) {
 
 // The signed payload is `<id>.<issued-at seconds>`. A missing secret or database fails
 // closed, cookies expire server-side, and deleting a registration row revokes access.
-async function isRegistered(request, env) {
+// Returns the registration id the cookie proves, or null.
+async function accountId(request, env) {
   const value = readCookie(request, COOKIE_NAME);
-  if (!value || !env.SESSION_SECRET || !env.DB) return false;
+  if (!value || !env.SESSION_SECRET || !env.DB) return null;
   const dot = value.lastIndexOf('.');
-  if (dot < 1) return false;
+  if (dot < 1) return null;
   const payload = value.slice(0, dot);
-  if (!sameString(value.slice(dot + 1), await hmac(env.SESSION_SECRET, payload))) return false;
+  if (!sameString(value.slice(dot + 1), await hmac(env.SESSION_SECRET, payload))) return null;
   const [id, issuedAt] = payload.split('.');
   const age = Math.floor(Date.now() / 1000) - Number(issuedAt);
-  if (!id || !Number.isInteger(Number(issuedAt)) || age < 0 || age > COOKIE_MAX_AGE) return false;
-  return Boolean(await env.DB.prepare('SELECT id FROM registrations WHERE id = ?').bind(id).first());
+  if (!id || !Number.isInteger(Number(issuedAt)) || age < 0 || age > COOKIE_MAX_AGE) return null;
+  const row = await env.DB.prepare('SELECT id FROM registrations WHERE id = ?').bind(id).first();
+  return row ? row.id : null;
 }
+
+const isRegistered = async (request, env) => Boolean(await accountId(request, env));
 
 async function sessionCookie(env, id) {
   const payload = `${id}.${Math.floor(Date.now() / 1000)}`;
@@ -173,6 +177,100 @@ async function register(request, env) {
   return json({ ok: true, returning: !created }, created ? 201 : 200, { 'set-cookie': await sessionCookie(env, row.id) });
 }
 
+// Project storage: each creator's projects live in D1 under their registration id, so
+// they follow the account across devices and never mix between accounts. Every project
+// is rebuilt from an allow-list of metadata fields, so nothing else (such as file
+// contents) can be stored, whatever the client sends.
+const PROJECT_PATH = /^\/api\/projects\/([A-Za-z0-9-]{1,64})$/;
+const MAX_PROJECT_BYTES = 512 * 1024;
+const MAX_PROJECTS = 500;
+const MAX_MILESTONES = 2000;
+const STAGES = new Set(['Draft', 'Revision', 'Final']);
+const HASH_PATTERN = /^[a-f0-9]{64}$/;
+const ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+
+function text(value, max, { required = false } = {}) {
+  if (value === undefined || value === null || value === '') {
+    if (required) throw new Error('missing');
+    return '';
+  }
+  if (typeof value !== 'string' || value.length > max) throw new Error('too long');
+  return value;
+}
+
+function timestamp(value) {
+  if (typeof value !== 'string' || value.length > 40 || Number.isNaN(Date.parse(value))) throw new Error('bad date');
+  return value;
+}
+
+function cleanMilestone(m) {
+  if (!m || typeof m !== 'object') throw new Error('bad milestone');
+  if (!ID_PATTERN.test(m.id) || !STAGES.has(m.stage) || !HASH_PATTERN.test(m.hash)) throw new Error('bad milestone');
+  if (!Number.isSafeInteger(m.fileSize) || m.fileSize < 0) throw new Error('bad size');
+  return {
+    id: m.id,
+    title: text(m.title, 100, { required: true }),
+    stage: m.stage,
+    creator: text(m.creator, 100, { required: true }),
+    fileName: text(m.fileName, 255, { required: true }),
+    fileSize: m.fileSize,
+    hash: m.hash,
+    createdAt: timestamp(m.createdAt),
+  };
+}
+
+function cleanProject(id, p) {
+  if (!p || typeof p !== 'object' || p.id !== id || !Array.isArray(p.milestones)) throw new Error('bad project');
+  if (p.milestones.length > MAX_MILESTONES) throw new Error('too many milestones');
+  return {
+    id,
+    name: text(p.name, 80, { required: true }),
+    category: text(p.category, 40, { required: true }),
+    description: text(p.description, 300),
+    createdAt: timestamp(p.createdAt),
+    milestones: p.milestones.map(cleanMilestone),
+  };
+}
+
+async function listProjects(env, account) {
+  const { results } = await env.DB.prepare('SELECT data FROM projects WHERE account_id = ? ORDER BY created_at DESC')
+    .bind(account).all();
+  return json({ projects: results.map(r => JSON.parse(r.data)) });
+}
+
+async function saveProject(request, env, account, id) {
+  if (request.headers.get('origin') !== CANONICAL_ORIGIN) return json({ error: 'Cross-origin writes are not allowed.' }, 403);
+  if (!(request.headers.get('content-type') || '').includes('application/json')) return json({ error: 'Send the project as JSON.' }, 415);
+  const raw = await request.text();
+  if (raw.length > MAX_PROJECT_BYTES) return json({ error: 'This project is too large to save.' }, 413);
+  let project;
+  try { project = cleanProject(id, JSON.parse(raw)); } catch { return json({ error: 'The project record is not valid.' }, 400); }
+
+  const exists = await env.DB.prepare('SELECT id FROM projects WHERE account_id = ? AND id = ?').bind(account, id).first();
+  if (!exists) {
+    const { n } = await env.DB.prepare('SELECT COUNT(*) AS n FROM projects WHERE account_id = ?').bind(account).first();
+    if (n >= MAX_PROJECTS) return json({ error: 'You have reached the project limit.' }, 409);
+  }
+  const now = new Date().toISOString();
+  await env.DB.prepare('INSERT INTO projects (account_id, id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(account_id, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at')
+    .bind(account, id, JSON.stringify(project), project.createdAt, now).run();
+  return json({ ok: true, project }, exists ? 200 : 201);
+}
+
+function logout(request) {
+  if (request.headers.get('origin') !== CANONICAL_ORIGIN) return json({ error: 'Cross-origin requests are not allowed.' }, 403);
+  return json({ ok: true }, 200, { 'set-cookie': `${COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax` });
+}
+
+async function projectsApi(request, env, url) {
+  const account = await accountId(request, env);
+  if (!account) return json({ error: 'Sign in to use your workspace.' }, 401);
+  const match = url.pathname.match(PROJECT_PATH);
+  if (url.pathname === '/api/projects' && (request.method === 'GET' || request.method === 'HEAD')) return listProjects(env, account);
+  if (match && request.method === 'PUT') return saveProject(request, env, account, match[1]);
+  return json({ error: 'Not found.' }, 404);
+}
+
 async function serveAsset(request, env, path) {
   try {
     const target = path ? new Request(new URL(path, request.url), request) : request;
@@ -204,9 +302,13 @@ export default {
       url.protocol = 'https:';
       url.port = '';
       response = new Response(null, { status: 301, headers: { location: url.href } });
-    // 2. Registration is the only write; everything else is GET/HEAD.
+    // 2. Registration, sign-out and project saves are the only writes; everything else is GET/HEAD.
     } else if (url.pathname === '/api/register' && request.method === 'POST') {
       response = await register(request, env);
+    } else if (url.pathname === '/api/logout' && request.method === 'POST') {
+      response = logout(request);
+    } else if (url.pathname === '/api/projects' || url.pathname.startsWith('/api/projects/')) {
+      response = await projectsApi(request, env, url);
     } else if (request.method !== 'GET' && request.method !== 'HEAD') {
       response = new Response('Method not allowed\n', {
         status: 405,

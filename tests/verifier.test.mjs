@@ -28,6 +28,7 @@ else if (url.pathname === '/health') { type = 'application/json'; body = JSON.st
 else if (url.pathname === '/definitely-not-a-page') { status = process.env.MOCK_SOFT_404 === '1' ? 200 : 404; body = '<meta name="robots" content="noindex">'; }
 else if (url.pathname === '/app.js') { status = 403; type = 'text/plain'; body = 'Registration required'; }
 else if (url.pathname === '/api/session') { type = 'application/json'; body = JSON.stringify({ registered: false, registrationOpen: true }); extras = 'cache-control: no-store\\r\\n'; }
+else if (url.pathname === '/api/projects') { status = 401; type = 'application/json'; body = '{"error":"Sign in"}'; extras = 'cache-control: no-store\\r\\n'; }
 else if (url.pathname === '/example-path/') { status = 301; extras = 'location: https://proofstreamapp.com/example-path?x=1\\r\\n'; }
 const headers = 'HTTP/2 ' + status + '\\r\\ncontent-type: ' + type + '\\r\\n' + extras +
  'strict-transport-security: max-age=31536000; includeSubDomains\\r\\ncontent-security-policy: default-src self\\r\\nx-frame-options: DENY\\r\\nx-content-type-options: nosniff\\r\\n\\r\\n';

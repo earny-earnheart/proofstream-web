@@ -2,6 +2,8 @@ proofstream-web/
   .gitignore
   README.md
   VALIDATION.md
+  migrations/0001_registrations.sql
+  migrations/0002_projects.sql
   package.json
   public/.well-known/security.txt
   public/404.html
@@ -9,11 +11,15 @@ proofstream-web/
   public/favicon.ico
   public/favicon.svg
   public/index.html
+  public/register.html
+  public/register.js
   public/robots.txt
   public/sitemap.xml
   public/styles.css
   scripts/verify-production.sh
   src/worker.js
+  tests/projects.test.mjs
+  tests/registration.test.mjs
   tests/verifier.test.mjs
   tests/worker.test.mjs
   wrangler.jsonc
