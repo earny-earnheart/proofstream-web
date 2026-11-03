@@ -1,11 +1,46 @@
 'use strict';
 const form = document.getElementById('register-form');
 const error = form.querySelector('.form-error');
-const button = form.querySelector('button[type=submit]');
+const button = document.getElementById('register-submit');
+const password = document.getElementById('register-password');
+const name = document.getElementById('register-name');
+let mode = 'create';
+
+const AUTH_ERRORS = {
+  failed: 'Google sign-in did not complete. Please try again.',
+  exists: 'An account with this email already exists. Sign in with your email and password.',
+  closed: 'New registration is closed right now. Existing creators can still sign in.',
+  unavailable: 'Google sign-in is not available right now. Use your email and password instead.',
+};
+const authError = new URLSearchParams(location.search).get('auth');
+if (AUTH_ERRORS[authError]) error.textContent = AUTH_ERRORS[authError];
+
+function setMode(next) {
+  mode = next;
+  const creating = mode === 'create';
+  document.querySelectorAll('[data-mode]').forEach(b => {
+    b.classList.toggle('selected', b.dataset.mode === mode);
+    b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
+  });
+  document.getElementById('register-title').textContent = creating ? 'Create your account.' : 'Welcome back.';
+  document.getElementById('name-field').hidden = !creating;
+  document.getElementById('password-note').hidden = !creating;
+  name.required = creating;
+  password.autocomplete = creating ? 'new-password' : 'current-password';
+  password.minLength = creating ? 10 : 1;
+  form.action = creating ? '/api/register' : '/api/login';
+  button.textContent = creating ? 'Create account ↗' : 'Sign in ↗';
+}
+document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { error.textContent = ''; setMode(b.dataset.mode); }));
 
 fetch('/api/session', { credentials: 'same-origin' }).then(r => r.json()).then(s => {
   if (s.registered) location.replace('/');
-  else if (!s.registrationOpen) error.textContent = 'New registration is closed right now. Registered creators can still sign in with their email.';
+  document.getElementById('google-sign-in').hidden = !s.googleSignIn;
+  document.getElementById('register-divider').hidden = !s.googleSignIn;
+  if (!s.registrationOpen) {
+    setMode('signin');
+    if (!error.textContent) error.textContent = 'New registration is closed right now. Existing creators can still sign in.';
+  }
 }).catch(() => {});
 
 form.addEventListener('submit', async e => {
@@ -18,14 +53,16 @@ form.addEventListener('submit', async e => {
   }
   button.disabled = true;
   try {
-    const response = await fetch('/api/register', {
+    const body = Object.fromEntries(new FormData(form));
+    if (mode !== 'create') delete body.name;
+    const response = await fetch(mode === 'create' ? '/api/register' : '/api/login', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(Object.fromEntries(new FormData(form))),
+      body: JSON.stringify(body),
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || 'Registration failed. Please try again.');
+    if (!response.ok) throw new Error(result.error || 'That did not work. Please try again.');
     location.replace('/');
   } catch (err) {
     error.textContent = err.message;

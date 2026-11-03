@@ -34,7 +34,7 @@ fetch_url() {
 header_matches() { grep -Eiq "$1" "$HEADERS"; }
 
 # Without a session cookie, / must show the registration page, never the workspace.
-if fetch_url "$ORIGIN/" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Register</title>' "$BODY" \
+if fetch_url "$ORIGIN/" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Sign in</title>' "$BODY" \
     && grep -Fq 'id="register-form"' "$BODY"; then
   report PASS 'Homepage registration gate: unregistered visitors see the sign-up form'
 else report FAIL "Homepage registration gate (HTTP $STATUS)"; fi
@@ -84,6 +84,11 @@ if fetch_url "$ORIGIN/api/session" && [[ "$STATUS" == 200 ]] \
     && grep -Eq '"registered"[[:space:]]*:[[:space:]]*false' "$BODY"; then
   report PASS 'api/session reports an anonymous visitor as unregistered'
 else report FAIL "api/session (HTTP $STATUS)"; fi
+
+if fetch_url "$ORIGIN/api/projects" && [[ "$STATUS" == 401 ]] \
+    && header_matches '^cache-control:[[:space:]]*no-store[[:space:]]*$'; then
+  report PASS 'api/projects refuses anonymous visitors (401, no-store)'
+else report FAIL "api/projects must require a session (HTTP $STATUS)"; fi
 
 if fetch_url "$ORIGIN/health" && [[ "$STATUS" == 200 ]] \
     && header_matches '^content-type:[[:space:]]*application/json([;[:space:]]|$)' \

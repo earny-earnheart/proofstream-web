@@ -14,7 +14,7 @@ const get = key => args[args.indexOf(key) + 1];
 const url = new URL(args.at(-1));
 if (url.hostname.endsWith('.workers.dev') && process.env.MOCK_NETWORK_FAILURE === '1') process.exit(6);
 let status = 200, type = 'text/html; charset=utf-8';
-let body = '<title>ProofStream — Register</title><form id="register-form">';
+let body = '<title>ProofStream — Sign in</title><form id="register-form">';
 let extras = '';
 if (url.pathname === '/' && process.env.MOCK_UNGATED === '1') body = '<title>ProofStream — Your work. Your timeline.</title>';
 if (url.hostname.startsWith('www.')) {
@@ -28,6 +28,7 @@ else if (url.pathname === '/health') { type = 'application/json'; body = JSON.st
 else if (url.pathname === '/definitely-not-a-page') { status = process.env.MOCK_SOFT_404 === '1' ? 200 : 404; body = '<meta name="robots" content="noindex">'; }
 else if (url.pathname === '/app.js') { status = 403; type = 'text/plain'; body = 'Registration required'; }
 else if (url.pathname === '/api/session') { type = 'application/json'; body = JSON.stringify({ registered: false, registrationOpen: true }); extras = 'cache-control: no-store\\r\\n'; }
+else if (url.pathname === '/api/projects') { status = 401; type = 'application/json'; body = '{"error":"Sign in"}'; extras = 'cache-control: no-store\\r\\n'; }
 else if (url.pathname === '/example-path/') { status = 301; extras = 'location: https://proofstreamapp.com/example-path?x=1\\r\\n'; }
 const headers = 'HTTP/2 ' + status + '\\r\\ncontent-type: ' + type + '\\r\\n' + extras +
  'strict-transport-security: max-age=31536000; includeSubDomains\\r\\ncontent-security-policy: default-src self\\r\\nx-frame-options: DENY\\r\\nx-content-type-options: nosniff\\r\\n\\r\\n';
