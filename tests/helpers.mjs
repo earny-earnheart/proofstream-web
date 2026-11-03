@@ -28,6 +28,19 @@ export async function d1() {
         },
       };
     },
+    // D1 runs a batch as one transaction.
+    async batch(statements) {
+      db.exec('BEGIN');
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.all());
+        db.exec('COMMIT');
+        return results;
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
   };
 }
 
@@ -92,4 +105,16 @@ export async function signUp(env, email, password = PASSWORD) {
 
 export async function signIn(env, email, password = PASSWORD) {
   return cookieOf(await worker.fetch(post('/api/login', { email, password }), env));
+}
+
+// Run `hook` once, right after the first query matching `pattern` returns, to simulate
+// another request landing in between.
+export function interleave(env, pattern, hook) {
+  const prepare = env.DB.prepare.bind(env.DB);
+  let done = false;
+  env.DB.prepare = sql => {
+    const statement = prepare(sql);
+    if (done || !pattern.test(sql)) return statement;
+    return { bind: (...args) => { const bound = statement.bind(...args); return { ...bound, async first() { const row = await bound.first(); done = true; hook(); return row; } }; } };
+  };
 }

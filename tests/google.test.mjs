@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/worker.js';
-import { origin, envWith, get, post, cookieOf, google, PASSWORD, signUp, signIn } from './helpers.mjs';
+import { origin, envWith, get, post, cookieOf, google, PASSWORD, signUp, signIn, interleave } from './helpers.mjs';
 
 const CLIENT_ID = 'client-id.apps.googleusercontent.com';
 const withGoogle = (overrides = {}) => envWith({ GOOGLE_CLIENT_ID: CLIENT_ID, GOOGLE_CLIENT_SECRET: 'google-secret', ...overrides });
@@ -210,4 +210,41 @@ test('a vouched Google sign-in replaces an unvouched Google account that got the
   assert.deepEqual(env.DB.db.prepare('SELECT subject FROM identities').all().map(r => r.subject), ['google-owner']);
   // The unvouched account can no longer get in.
   assert.equal((await googleSignIn(env, claims({ sub: 'google-stale', hd: undefined }))).callback.headers.get('location'), '/?auth=exists');
+});
+
+test('a takeover landing between sign-in and the new cookie leaves that cookie useless', async () => {
+  // A stale, unvouched Google user is reading their link when the owner takes over.
+  const env = await withGoogle();
+  await googleSignIn(env, claims({ sub: 'google-stale', hd: undefined }));
+  interleave(env, /FROM identities i JOIN registrations/, () => {
+    env.DB.db.prepare("UPDATE registrations SET email_verified = 1, session_version = session_version + 1").run();
+    env.DB.db.prepare("DELETE FROM identities").run();
+  });
+  const stale = await googleSignIn(env, claims({ sub: 'google-stale', hd: undefined }));
+  assert.notEqual(stale.session, undefined);
+  assert.equal(await (await worker.fetch(get('/', stale.session), env)).text(), 'asset:/register');
+
+  // A password holder is signing in when the owner takes over.
+  const other = await withGoogle();
+  await signUp(other, 'ada@example.com', 'squatter-password');
+  interleave(other, /SELECT id, password_hash, session_version FROM registrations/, () => {
+    other.DB.db.prepare("UPDATE registrations SET email_verified = 1, password_hash = NULL, session_version = session_version + 1").run();
+  });
+  const late = await signIn(other, 'ada@example.com', 'squatter-password');
+  assert.notEqual(late, undefined);
+  assert.equal(await (await worker.fetch(get('/', late), other)).text(), 'asset:/register');
+});
+
+test('a takeover that lost a race changes nothing', async () => {
+  const env = await withGoogle();
+  await signUp(env, 'ada@example.com', 'squatter-password');
+  // Another vouched Google account finishes its takeover first.
+  interleave(env, /SELECT id, email_verified, session_version/, () => {
+    env.DB.db.prepare("UPDATE registrations SET email_verified = 1, password_hash = NULL, session_version = session_version + 1").run();
+    env.DB.db.prepare("INSERT INTO identities SELECT 'google', 'google-winner', id, email, '2026-11-03' FROM registrations").run();
+  });
+  const { callback, session } = await googleSignIn(env);
+  assert.equal(callback.headers.get('location'), '/?auth=exists');
+  assert.equal(session, undefined);
+  assert.deepEqual(env.DB.db.prepare('SELECT subject FROM identities').all().map(r => r.subject), ['google-winner']);
 });

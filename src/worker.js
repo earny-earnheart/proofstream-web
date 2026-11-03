@@ -107,9 +107,10 @@ async function accountId(request, env) {
 
 const isRegistered = async (request, env) => Boolean(await accountId(request, env));
 
-async function sessionCookie(env, id) {
-  const row = await env.DB.prepare('SELECT session_version FROM registrations WHERE id = ?').bind(id).first();
-  const payload = `${id}.${row.session_version}.${Math.floor(Date.now() / 1000)}`;
+// `version` must be the session_version read together with the proof of identity, so
+// a takeover that lands in between makes the new cookie invalid rather than valid.
+async function sessionCookie(env, id, version) {
+  const payload = `${id}.${version}.${Math.floor(Date.now() / 1000)}`;
   const value = `${payload}.${await hmac(env.SESSION_SECRET, payload)}`;
   return `${COOKIE_NAME}=${value}; Max-Age=${COOKIE_MAX_AGE}; Path=/; HttpOnly; Secure; SameSite=Lax`;
 }
@@ -209,10 +210,10 @@ async function register(request, env) {
     if (existing.password_hash || existing.linked) return taken;
     // The UPDATE re-checks every condition, so a Google sign-in that verifies or links
     // this account between the SELECT above and here wins and no password is set.
-    const claimed = await env.DB.prepare('UPDATE registrations SET password_hash = ?, session_version = session_version + 1 WHERE id = ? AND password_hash IS NULL AND email_verified = 0 AND NOT EXISTS (SELECT 1 FROM identities WHERE account_id = registrations.id) RETURNING id')
+    const claimed = await env.DB.prepare('UPDATE registrations SET password_hash = ?, session_version = session_version + 1 WHERE id = ? AND password_hash IS NULL AND email_verified = 0 AND NOT EXISTS (SELECT 1 FROM identities WHERE account_id = registrations.id) RETURNING session_version')
       .bind(await hashPassword(body.password), existing.id).first();
     if (!claimed) return taken;
-    return json({ ok: true, returning: true }, 200, { 'set-cookie': await sessionCookie(env, existing.id) });
+    return json({ ok: true, returning: true }, 200, { 'set-cookie': await sessionCookie(env, existing.id, claimed.session_version) });
   }
   if (env.REGISTRATION_OPEN !== 'true') return json({ error: 'Registration is closed right now.' }, 403);
   const id = crypto.randomUUID();
@@ -220,9 +221,9 @@ async function register(request, env) {
   await env.DB.prepare('INSERT INTO registrations (id, email, name, created_at, user_agent, password_hash) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO NOTHING')
     .bind(id, email, name, new Date().toISOString(), userAgent, await hashPassword(body.password)).run();
   // A concurrent request may have won the insert; that account is not ours to sign into.
-  const row = await env.DB.prepare('SELECT id FROM registrations WHERE email = ?').bind(email).first();
+  const row = await env.DB.prepare('SELECT id, session_version FROM registrations WHERE email = ?').bind(email).first();
   if (row.id !== id) return taken;
-  return json({ ok: true, returning: false }, 201, { 'set-cookie': await sessionCookie(env, id) });
+  return json({ ok: true, returning: false }, 201, { 'set-cookie': await sessionCookie(env, id, row.session_version) });
 }
 
 async function login(request, env) {
@@ -231,12 +232,12 @@ async function login(request, env) {
   const email = String(body.email ?? '').trim().toLowerCase();
   const password = typeof body.password === 'string' ? body.password.slice(0, PASSWORD_MAX) : '';
   const row = email.length <= 254
-    ? await env.DB.prepare('SELECT id, password_hash FROM registrations WHERE email = ?').bind(email).first()
+    ? await env.DB.prepare('SELECT id, password_hash, session_version FROM registrations WHERE email = ?').bind(email).first()
     : null;
   // Hash even when there is no password to compare, so timing does not reveal accounts.
   const ok = row?.password_hash ? await checkPassword(password, row.password_hash) : (await hashPassword(password), false);
   if (!ok) return json({ error: 'That email and password do not match an account. Accounts made with Google sign in with Google.' }, 401);
-  return json({ ok: true }, 200, { 'set-cookie': await sessionCookie(env, row.id) });
+  return json({ ok: true }, 200, { 'set-cookie': await sessionCookie(env, row.id, row.session_version) });
 }
 
 // Google sign-in: the OAuth authorization-code flow with PKCE. The state and code
@@ -333,41 +334,52 @@ async function googleCallback(request, env, url) {
   if (!profile || profile.email.length > 254 || !EMAIL_PATTERN.test(profile.email)) return authFailed('failed');
 
   const now = new Date().toISOString();
-  const linked = await env.DB.prepare("SELECT account_id FROM identities WHERE provider = 'google' AND subject = ?").bind(profile.subject).first();
-  let account = linked?.account_id;
-  if (!account) {
-    const existing = await env.DB.prepare('SELECT id, email_verified, (SELECT COUNT(*) FROM identities WHERE account_id = registrations.id) AS linked FROM registrations WHERE email = ?')
-      .bind(profile.email).first();
-    if (existing) {
-      // Only a Google account that vouches for the email may join an existing account,
-      // and never one already owned by another vouched Google account.
-      if (!profile.authoritative || (existing.email_verified && existing.linked)) return authFailed('exists');
-      account = existing.id;
-      // Google proved who owns this email. Whoever held the account without that proof
-      // (a password, or a Google account that could not vouch for the email) loses
-      // access, and every existing session for the account ends.
-      if (!existing.email_verified) {
-        const taken = await env.DB.prepare('UPDATE registrations SET email_verified = 1, password_hash = NULL, session_version = session_version + 1 WHERE id = ? AND email_verified = 0 RETURNING id')
-          .bind(account).first();
-        if (!taken) return authFailed('exists');
-        await env.DB.prepare('DELETE FROM identities WHERE account_id = ?').bind(account).run();
-      }
-    } else {
-      if (env.REGISTRATION_OPEN !== 'true') return authFailed('closed');
-      account = crypto.randomUUID();
-      const userAgent = (request.headers.get('user-agent') || '').slice(0, 300);
-      await env.DB.prepare('INSERT INTO registrations (id, email, name, created_at, user_agent, email_verified) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO NOTHING')
-        .bind(account, profile.email, profile.name || profile.email.split('@')[0], now, userAgent, profile.authoritative ? 1 : 0).run();
-      // A concurrent sign-up may have created the row first. Do not sign into it here;
-      // a retry goes through the existing-account rules above.
-      const row = await env.DB.prepare('SELECT id FROM registrations WHERE email = ?').bind(profile.email).first();
-      if (row.id !== account) return authFailed('exists');
+  const signedIn = (account, version) => sessionCookie(env, account, version).then(cookie => redirect('/', [oauthCookie('', 0), cookie]));
+  const linkStatement = account => env.DB.prepare("INSERT INTO identities (provider, subject, account_id, email, created_at) SELECT 'google', ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM identities WHERE account_id = ?) ON CONFLICT(provider, subject) DO NOTHING RETURNING account_id")
+    .bind(profile.subject, account, profile.email, now, account);
+
+  // The link and the session version are read together, so a takeover cannot slip in between.
+  const linked = await env.DB.prepare("SELECT r.id, r.session_version FROM identities i JOIN registrations r ON r.id = i.account_id WHERE i.provider = 'google' AND i.subject = ?")
+    .bind(profile.subject).first();
+  if (linked) return signedIn(linked.id, linked.session_version);
+
+  const existing = await env.DB.prepare('SELECT id, email_verified, session_version, (SELECT COUNT(*) FROM identities WHERE account_id = registrations.id) AS linked FROM registrations WHERE email = ?')
+    .bind(profile.email).first();
+  if (existing) {
+    // Only a Google account that vouches for the email may join an existing account,
+    // and never one already owned by another vouched Google account.
+    if (!profile.authoritative || (existing.email_verified && existing.linked)) return authFailed('exists');
+    if (existing.email_verified) {
+      if (!(await linkStatement(existing.id).first())) return authFailed('exists');
+      return signedIn(existing.id, existing.session_version);
     }
-    const link = await env.DB.prepare("INSERT INTO identities (provider, subject, account_id, email, created_at) SELECT 'google', ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM identities WHERE account_id = ?) ON CONFLICT(provider, subject) DO NOTHING RETURNING account_id")
-      .bind(profile.subject, account, profile.email, now, account).first();
-    if (!link) return authFailed('exists');
+    // Google proved who owns this email. Whoever held the account without that proof
+    // (a password, or a Google account that could not vouch for the email) loses
+    // access, and every existing session for the account ends. One transaction: the
+    // old link goes, the account is verified with a new session version, and this
+    // Google account is linked, each step only if the takeover is still possible.
+    const [, verified, link] = await env.DB.batch([
+      env.DB.prepare('DELETE FROM identities WHERE account_id = ? AND EXISTS (SELECT 1 FROM registrations WHERE id = ? AND email_verified = 0)')
+        .bind(existing.id, existing.id),
+      env.DB.prepare('UPDATE registrations SET email_verified = 1, password_hash = NULL, session_version = session_version + 1 WHERE id = ? AND email_verified = 0 RETURNING session_version')
+        .bind(existing.id),
+      env.DB.prepare("INSERT INTO identities (provider, subject, account_id, email, created_at) SELECT 'google', ?, ?, ?, ? WHERE changes() = 1 AND NOT EXISTS (SELECT 1 FROM identities WHERE account_id = ?) ON CONFLICT(provider, subject) DO NOTHING RETURNING account_id")
+        .bind(profile.subject, existing.id, profile.email, now, existing.id),
+    ]);
+    if (!verified.results.length || !link.results.length) return authFailed('exists');
+    return signedIn(existing.id, verified.results[0].session_version);
   }
-  return redirect('/', [oauthCookie('', 0), await sessionCookie(env, account)]);
+
+  if (env.REGISTRATION_OPEN !== 'true') return authFailed('closed');
+  const account = crypto.randomUUID();
+  const userAgent = (request.headers.get('user-agent') || '').slice(0, 300);
+  await env.DB.prepare('INSERT INTO registrations (id, email, name, created_at, user_agent, email_verified) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO NOTHING')
+    .bind(account, profile.email, profile.name || profile.email.split('@')[0], now, userAgent, profile.authoritative ? 1 : 0).run();
+  // A concurrent sign-up may have created the row first. Do not sign into it here;
+  // a retry goes through the existing-account rules above.
+  const row = await env.DB.prepare('SELECT id, session_version FROM registrations WHERE email = ?').bind(profile.email).first();
+  if (row.id !== account || !(await linkStatement(account).first())) return authFailed('exists');
+  return signedIn(account, row.session_version);
 }
 
 // Project storage: each creator's projects live in D1 under their registration id, so
