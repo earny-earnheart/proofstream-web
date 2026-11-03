@@ -132,6 +132,17 @@ test('legacy email-only accounts can be claimed with a password once', async () 
   assert.equal(cookieOf(claimed).split('=')[1].split('.')[0], 'legacy');
   const second = await worker.fetch(post('/api/register', { name: 'Bo', email: 'ada@example.com', password: 'another-password' }), env);
   assert.equal(second.status, 409);
+
+  // The claim itself re-checks every condition: a verified or Google-linked legacy row
+  // (as left by a Google sign-in racing the claim) never gets a password.
+  for (const [id, setup] of [['verified', "UPDATE registrations SET email_verified = 1 WHERE id = 'verified'"],
+    ['linked', "INSERT INTO identities VALUES ('google', 'sub-linked', 'linked', 'linked@example.com', '2026-11-03')"]]) {
+    env.DB.db.prepare(`INSERT INTO registrations (id, email, name, created_at) VALUES ('${id}', '${id}@example.com', 'X', '2026-10-30')`).run();
+    env.DB.db.prepare(setup).run();
+    const response = await worker.fetch(post('/api/register', { name: 'X', email: `${id}@example.com`, password: PASSWORD }), env);
+    assert.equal(response.status, 409, id);
+    assert.equal(env.DB.db.prepare('SELECT password_hash FROM registrations WHERE id = ?').get(id).password_hash, null);
+  }
 });
 
 test('cookies from the old email-only sign-up, tampered cookies and foreign secrets stay gated', async () => {

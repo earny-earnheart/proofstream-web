@@ -7,7 +7,7 @@ const CLIENT_ID = 'client-id.apps.googleusercontent.com';
 const withGoogle = (overrides = {}) => envWith({ GOOGLE_CLIENT_ID: CLIENT_ID, GOOGLE_CLIENT_SECRET: 'google-secret', ...overrides });
 const claims = (extra = {}) => ({
   iss: 'https://accounts.google.com', aud: CLIENT_ID, sub: 'google-ada', email: 'Ada@Example.com',
-  email_verified: true, name: 'Ada Lovelace', exp: Math.floor(Date.now() / 1000) + 300, ...extra,
+  email_verified: true, hd: 'example.com', name: 'Ada Lovelace', exp: Math.floor(Date.now() / 1000) + 300, ...extra,
 });
 
 // Start the flow, then return to the callback as Google would.
@@ -159,4 +159,42 @@ test('Google sign-in is unavailable without configuration', async () => {
   assert.equal((await worker.fetch(get('/auth/google/callback?code=x&state=y'), env)).headers.get('location'), '/?auth=unavailable');
   assert.equal((await (await worker.fetch(get('/api/session'), env)).json()).googleSignIn, false);
   assert.equal(origin, 'https://proofstreamapp.com');
+});
+
+test('Google emails it cannot vouch for open new accounts but never take over existing ones', async () => {
+  const env = await withGoogle();
+  const personal = claims({ hd: undefined });
+  // No account yet: a new, unverified account is fine.
+  const fresh = await googleSignIn(env, personal);
+  assert.equal(fresh.callback.headers.get('location'), '/');
+  assert.equal(accounts(env)[0].email_verified, 0);
+
+  // An existing password account is left alone, password and sessions intact.
+  const other = await withGoogle();
+  const owner = await signUp(other, 'ada@example.com');
+  for (const bad of [personal, claims({ hd: 'other.example' })]) {
+    const { callback, session } = await googleSignIn(other, bad);
+    assert.equal(callback.headers.get('location'), '/?auth=exists');
+    assert.equal(session, undefined);
+  }
+  assert.equal(await (await worker.fetch(get('/', owner), other)).text(), 'asset:/');
+  assert.notEqual(await signIn(other, 'ada@example.com'), undefined);
+  assert.equal(other.DB.db.prepare('SELECT COUNT(*) AS n FROM identities').get().n, 0);
+
+  // Gmail addresses are authoritative without an hd claim.
+  const gmail = await withGoogle();
+  const squatter = await signUp(gmail, 'ada@gmail.com', 'squatter-password');
+  const { session } = await googleSignIn(gmail, claims({ hd: undefined, email: 'ada@gmail.com' }));
+  assert.notEqual(session, undefined);
+  assert.equal(await (await worker.fetch(get('/', squatter), gmail)).text(), 'asset:/register');
+});
+
+test('an account linked to one Google account cannot be joined by another', async () => {
+  const env = await withGoogle();
+  const first = await googleSignIn(env);
+  const second = await googleSignIn(env, claims({ sub: 'google-someone-else' }));
+  assert.equal(second.callback.headers.get('location'), '/?auth=exists');
+  assert.equal(second.session, undefined);
+  assert.equal(env.DB.db.prepare('SELECT COUNT(*) AS n FROM identities').get().n, 1);
+  assert.equal(await (await worker.fetch(get('/', first.session), env)).text(), 'asset:/');
 });

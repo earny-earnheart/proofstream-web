@@ -207,7 +207,9 @@ async function register(request, env) {
     .bind(email).first();
   if (existing) {
     if (existing.password_hash || existing.linked) return taken;
-    const claimed = await env.DB.prepare('UPDATE registrations SET password_hash = ?, session_version = session_version + 1 WHERE id = ? AND password_hash IS NULL RETURNING id')
+    // The UPDATE re-checks every condition, so a Google sign-in that verifies or links
+    // this account between the SELECT above and here wins and no password is set.
+    const claimed = await env.DB.prepare('UPDATE registrations SET password_hash = ?, session_version = session_version + 1 WHERE id = ? AND password_hash IS NULL AND email_verified = 0 AND NOT EXISTS (SELECT 1 FROM identities WHERE account_id = registrations.id) RETURNING id')
       .bind(await hashPassword(body.password), existing.id).first();
     if (!claimed) return taken;
     return json({ ok: true, returning: true }, 200, { 'set-cookie': await sessionCookie(env, existing.id) });
@@ -242,6 +244,10 @@ async function login(request, env) {
 // endpoint is called directly over TLS, so its ID token can be read without checking
 // its signature (OpenID Connect Core 3.1.3.7); its audience, issuer, expiry and
 // email_verified flag are still checked. Only verified emails are accepted.
+// Google vouches for who currently owns an email only for Gmail addresses and for Google
+// Workspace accounts whose `hd` claim matches the email's domain. Other addresses may
+// have been verified long ago, so they can open a new account but never take over or
+// link to an existing one.
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_ISSUERS = new Set(['https://accounts.google.com', 'accounts.google.com']);
@@ -301,7 +307,10 @@ async function googleProfile(env, code, verifier) {
     if (claims.aud !== env.GOOGLE_CLIENT_ID || !GOOGLE_ISSUERS.has(claims.iss)) return null;
     if (!(claims.exp > Date.now() / 1000) || claims.email_verified !== true) return null;
     if (typeof claims.sub !== 'string' || !claims.sub || typeof claims.email !== 'string') return null;
-    return { subject: claims.sub, email: claims.email.trim().toLowerCase(), name: String(claims.name || '').trim().slice(0, 100) };
+    const email = claims.email.trim().toLowerCase();
+    const domain = email.split('@').pop();
+    const authoritative = domain === 'gmail.com' || (typeof claims.hd === 'string' && claims.hd.toLowerCase() === domain);
+    return { subject: claims.sub, email, authoritative, name: String(claims.name || '').trim().slice(0, 100) };
   } catch {
     return null;
   }
@@ -327,8 +336,11 @@ async function googleCallback(request, env, url) {
   const linked = await env.DB.prepare("SELECT account_id FROM identities WHERE provider = 'google' AND subject = ?").bind(profile.subject).first();
   let account = linked?.account_id;
   if (!account) {
-    const existing = await env.DB.prepare('SELECT id, email_verified FROM registrations WHERE email = ?').bind(profile.email).first();
+    const existing = await env.DB.prepare('SELECT id, email_verified, (SELECT COUNT(*) FROM identities WHERE account_id = registrations.id) AS linked FROM registrations WHERE email = ?')
+      .bind(profile.email).first();
     if (existing) {
+      // Never attach a second Google account, or one whose email Google cannot vouch for.
+      if (existing.linked || !profile.authoritative) return authFailed('exists');
       account = existing.id;
       // Google proved who owns this email. Anyone else who set a password on it without
       // that proof loses it, and every existing session for the account ends.
@@ -340,13 +352,16 @@ async function googleCallback(request, env, url) {
       if (env.REGISTRATION_OPEN !== 'true') return authFailed('closed');
       account = crypto.randomUUID();
       const userAgent = (request.headers.get('user-agent') || '').slice(0, 300);
-      await env.DB.prepare('INSERT INTO registrations (id, email, name, created_at, user_agent, email_verified) VALUES (?, ?, ?, ?, ?, 1) ON CONFLICT(email) DO NOTHING')
-        .bind(account, profile.email, profile.name || profile.email.split('@')[0], now, userAgent).run();
-      // A concurrent sign-up may have created the row first; the verified email still owns it.
-      account = (await env.DB.prepare('SELECT id FROM registrations WHERE email = ?').bind(profile.email).first()).id;
+      await env.DB.prepare('INSERT INTO registrations (id, email, name, created_at, user_agent, email_verified) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO NOTHING')
+        .bind(account, profile.email, profile.name || profile.email.split('@')[0], now, userAgent, profile.authoritative ? 1 : 0).run();
+      // A concurrent sign-up may have created the row first. Do not sign into it here;
+      // a retry goes through the existing-account rules above.
+      const row = await env.DB.prepare('SELECT id FROM registrations WHERE email = ?').bind(profile.email).first();
+      if (row.id !== account) return authFailed('exists');
     }
-    await env.DB.prepare("INSERT INTO identities (provider, subject, account_id, email, created_at) VALUES ('google', ?, ?, ?, ?) ON CONFLICT(provider, subject) DO NOTHING")
-      .bind(profile.subject, account, profile.email, now).run();
+    const link = await env.DB.prepare("INSERT INTO identities (provider, subject, account_id, email, created_at) SELECT 'google', ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM identities WHERE account_id = ?) ON CONFLICT(provider, subject) DO NOTHING RETURNING account_id")
+      .bind(profile.subject, account, profile.email, now, account).first();
+    if (!link) return authFailed('exists');
   }
   return redirect('/', [oauthCookie('', 0), await sessionCookie(env, account)]);
 }

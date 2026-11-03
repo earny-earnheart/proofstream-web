@@ -55,10 +55,14 @@ serves `public/register.html` and `/app.js` returns 403. Creators sign in one of
   and links the Google account in the D1 `identities` table. A later sign-in with the
   same Google account reaches the same ProofStream account even if its email changes.
 
-Google proves who owns an email; a password sign-up does not. So when a Google sign-in
-arrives for an email whose account was never verified, that Google user takes the
-account over: any password on it is removed and every existing session ends. An email
-that already belongs to a Google account cannot get a password by signing up.
+Google vouches for who currently owns an email only for Gmail addresses and for Google
+Workspace accounts whose `hd` claim matches the email's domain; a password sign-up
+proves nothing. So when such a Google sign-in arrives for an email whose account was
+never verified, that Google user takes the account over: any password on it is removed
+and every existing session ends. Other Google emails can open a new account but are
+refused (`/?auth=exists`) if the email already has one. An account linked to one Google
+account cannot be joined by another, and an email that belongs to a Google account
+cannot get a password by signing up.
 Registrations from the earlier email-only sign-up (no password, no Google link) can be
 claimed once with a password, or by Google.
 

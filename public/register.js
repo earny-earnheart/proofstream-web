@@ -8,6 +8,7 @@ let mode = 'create';
 
 const AUTH_ERRORS = {
   failed: 'Google sign-in did not complete. Please try again.',
+  exists: 'An account with this email already exists. Sign in with your email and password.',
   closed: 'New registration is closed right now. Existing creators can still sign in.',
   unavailable: 'Google sign-in is not available right now. Use your email and password instead.',
 };
