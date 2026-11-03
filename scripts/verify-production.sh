@@ -34,7 +34,7 @@ fetch_url() {
 header_matches() { grep -Eiq "$1" "$HEADERS"; }
 
 # Without a session cookie, / must show the registration page, never the workspace.
-if fetch_url "$ORIGIN/" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Register</title>' "$BODY" \
+if fetch_url "$ORIGIN/" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Sign in</title>' "$BODY" \
     && grep -Fq 'id="register-form"' "$BODY"; then
   report PASS 'Homepage registration gate: unregistered visitors see the sign-up form'
 else report FAIL "Homepage registration gate (HTTP $STATUS)"; fi

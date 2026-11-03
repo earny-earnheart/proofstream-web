@@ -24,7 +24,7 @@ switching. The current concept exports records but does not yet import them.
 
 `GET /api/projects` lists the signed-in creator's projects; `PUT /api/projects/<id>`
 (same-origin, JSON, up to 512 KB) creates or replaces one. Both answer 401 without a
-valid `ps_reg` cookie, and every query is scoped to the registration id inside that
+valid `ps_session` cookie, and every query is scoped to the registration id inside that
 signed cookie, so one account cannot read or overwrite another's projects, even with
 the same project id. The Worker rebuilds each project from an allow-list (name,
 category, description, dates, and per milestone: title, stage, creator, file name,
@@ -38,18 +38,54 @@ Records saved by the earlier browser-only preview (localStorage key
 the local copy is removed. On a browser shared by several creators, the first one to
 sign in receives them.
 
-## Registration gate
+## Sign-in
 
-`/`, `/index.html` and `/app.js` require a signed `ps_reg` cookie. Without one, `/` serves
-`public/register.html` and `/app.js` returns 403. `POST /api/register` (same-origin only)
-validates name/email, stores the creator in D1 `proofstream-registrations` and sets the
-cookie (HttpOnly, Secure, SameSite=Lax, 1 year). Repeat emails sign back in. `GET
-/api/session` reports `{registered, registrationOpen}`. Set `REGISTRATION_OPEN` to
-`"false"` in `wrangler.jsonc` to close new sign-ups; existing registrants still get in.
-The cookie carries a signed issue time (checked server-side, 1-year limit) and is signed with the `SESSION_SECRET` secret; without it, everyone stays gated. Every sign-up and sign-back-in must also pass Cloudflare Turnstile (widget sitekey
-`0x4AAAAAAFxNFLyzIiuPb_D6`, in `public/register.html`). The Worker checks each token with
-Cloudflare's siteverify using the `TURNSTILE_SECRET` secret; without that secret,
-registration returns 503 "temporarily unavailable" (it fails closed). To revoke someone, delete their row (their projects are deleted with it): `npx wrangler@latest d1 execute proofstream-registrations --remote --command "DELETE FROM registrations WHERE email = 'person@example.com'"`.
+`/`, `/index.html` and `/app.js` require a signed `ps_session` cookie. Without one, `/`
+serves `public/register.html` and `/app.js` returns 403. Creators sign in one of two ways:
+
+- **Email and password.** `POST /api/register` (name, email, password of 10 to 128
+  characters) creates an account; `POST /api/login` signs in. Passwords are stored as
+  salted PBKDF2-SHA256 at 100,000 iterations (the Workers maximum). Signing up again
+  with an email that already has an account returns 409 and no cookie. Wrong passwords
+  and unknown emails get the same 401. Both routes are same-origin only and need a
+  Cloudflare Turnstile pass. There is no password reset or email verification yet.
+- **Google.** `/auth/google` starts the OAuth authorization-code flow with PKCE; the
+  state and verifier ride in a signed 10-minute `ps_oauth` cookie. The callback accepts
+  only ID tokens for our client ID from Google's issuer with `email_verified: true`,
+  and links the Google account in the D1 `identities` table. A later sign-in with the
+  same Google account reaches the same ProofStream account even if its email changes.
+
+Google proves who owns an email; a password sign-up does not. So when a Google sign-in
+arrives for an email whose account was never verified, that Google user takes the
+account over: any password on it is removed and every existing session ends. An email
+that already belongs to a Google account cannot get a password by signing up.
+Registrations from the earlier email-only sign-up (no password, no Google link) can be
+claimed once with a password, or by Google.
+
+The cookie (HttpOnly, Secure, SameSite=Lax, 1 year) carries the account id, its
+`session_version` and a signed issue time, signed with the `SESSION_SECRET` secret;
+without that secret everyone stays gated. Bumping `session_version` signs the account
+out on every device. Cookies from the old email-only sign-up (`ps_reg`) are not
+accepted. `GET /api/session` reports `{registered, registrationOpen, googleSignIn}`.
+Set `REGISTRATION_OPEN` to `"false"` in `wrangler.jsonc` to stop new accounts; existing
+creators still sign in. Turnstile uses widget sitekey `0x4AAAAAAFxNFLyzIiuPb_D6` (in
+`public/register.html`) and the `TURNSTILE_SECRET` secret; without that secret, password
+sign-up and sign-in return 503 (fail closed). To revoke someone, delete their row (their
+projects and Google link are deleted with it): `npx wrangler@latest d1 execute proofstream-registrations --remote --command "DELETE FROM registrations WHERE email = 'person@example.com'"`.
+
+### Google sign-in setup
+
+1. In Google Cloud Console, go to APIs & Services, then Credentials, and create an OAuth
+   client ID of type Web application. Authorized redirect URI:
+   `https://proofstreamapp.com/auth/google/callback`. On the OAuth consent screen, use
+   the `openid`, `email` and `profile` scopes and publish the app.
+2. From this folder, store both values as Worker secrets (paste when prompted):
+   ```sh
+   npx wrangler@latest secret put GOOGLE_CLIENT_ID
+   npx wrangler@latest secret put GOOGLE_CLIENT_SECRET
+   ```
+   Until both exist, the Google button stays hidden and `/auth/google` redirects back
+   with "not available".
 
 One-time setup before the first deploy with the gate:
 ```sh
@@ -57,7 +93,7 @@ npx wrangler@latest d1 create proofstream-registrations   # paste database_id in
 npx wrangler@latest d1 migrations apply proofstream-registrations --remote
 npx wrangler@latest secret put SESSION_SECRET             # paste a long random value, e.g. openssl rand -hex 32
 pbpaste | tr -d '[:space:]' | npx wrangler@latest secret put TURNSTILE_SECRET   # copy the widget's Secret Key first
-npx wrangler@latest secret list                           # names only: expect SESSION_SECRET and TURNSTILE_SECRET
+npx wrangler@latest secret list                           # names only: expect SESSION_SECRET, TURNSTILE_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 ```
 Run secret commands from this folder so they reach `proofstream-web` in the Pantheon
 Enterprise account. Piping from the clipboard avoids saving an empty value from the hidden prompt.
@@ -69,7 +105,7 @@ Local testing: put `SESSION_SECRET=...` and Cloudflare's always-pass test secret
 Cloudflare's test secret reports the hostname `example.com`, which the Worker rejects,
 and same-origin checks expect `https://proofstreamapp.com`. So a local browser cannot
 sign up or save. Seed a row in the local D1 and send requests with that origin header
-(as `tests/projects.test.mjs` does) to exercise the API locally.
+(as `tests/helpers.mjs` does) to exercise the API locally.
 
 ## Deployment target and routing
 

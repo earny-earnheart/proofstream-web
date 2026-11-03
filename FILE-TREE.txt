@@ -4,6 +4,7 @@ proofstream-web/
   VALIDATION.md
   migrations/0001_registrations.sql
   migrations/0002_projects.sql
+  migrations/0003_sign_in.sql
   package.json
   public/.well-known/security.txt
   public/404.html
@@ -18,6 +19,8 @@ proofstream-web/
   public/styles.css
   scripts/verify-production.sh
   src/worker.js
+  tests/google.test.mjs
+  tests/helpers.mjs
   tests/projects.test.mjs
   tests/registration.test.mjs
   tests/verifier.test.mjs

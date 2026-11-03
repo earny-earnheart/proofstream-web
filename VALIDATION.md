@@ -1,24 +1,25 @@
 # Validation results
 
-Last updated 2026-11-02, after adding account project storage (not yet deployed).
+Last updated 2026-11-03, after adding account project storage and Google / password
+sign-in (branch `account-project-storage`, PR #5, not yet deployed).
 
-## Account project storage (branch `account-project-storage`)
+## Sign-in (PR #5)
 
-- `tests/projects.test.mjs` runs the Worker against real SQLite with both migrations
-  and foreign keys on: a project saved on one device appears after signing in on
-  another; two accounts with the same project id stay separate; smuggled file data in
-  a project or milestone is dropped before storage; invalid, oversized, cross-origin,
-  non-JSON and anonymous writes are refused; the 500-project cap holds; deleting a
-  registration revokes access and deletes its projects; sign-out clears the cookie.
-- Local `wrangler dev` with local D1: save on one session cookie and list on a second
-  cookie for the same account returned the project; a second account saw `[]`; a
-  smuggled `fileData` field was not in the stored row; deleting the registration
-  cascaded to its projects and the old cookie got 401. The workspace UI rendered the
-  synced project with no console errors.
-- Not yet checked: saving from the UI in a real browser (same-origin checks need
-  `https://proofstreamapp.com`), the localStorage migration on real data, and the
-  remote migration. Do these on production after deploy, using two devices and two
-  accounts.
+- `tests/registration.test.mjs` and `tests/google.test.mjs` run against real SQLite
+  with every migration. Covered: password sign-up stores a PBKDF2 hash, never the
+  password; signing up again with an existing email returns 409 and no cookie (the
+  account-takeover fix); wrong password and unknown email get the same 401; Turnstile
+  required on both forms and fails closed; old `ps_reg` cookies and tampered or
+  foreign-secret cookies are refused; bumping `session_version` signs out everywhere.
+- Google: redirect carries PKCE S256 and a signed state cookie; forged, missing,
+  tampered or expired state is refused before Google is called; the token request
+  proves the PKCE verifier; unverified emails and tokens with the wrong audience,
+  issuer, expiry or subject are refused; the same Google account always reaches the
+  same ProofStream account; a verified Google sign-in takes over an unverified password
+  account, removing the password and ending its sessions; an email linked to Google
+  cannot get a password by signing up; closed registration still admits existing
+  creators.
+- Not yet checked: a real Google sign-in (needs the OAuth client and production URL).
 
 ## Automated (`npm test`)
 

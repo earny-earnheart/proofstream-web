@@ -1,60 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, readdir } from 'node:fs/promises';
-import { DatabaseSync } from 'node:sqlite';
 import worker from '../src/worker.js';
-
-const origin = 'https://proofstreamapp.com';
-
-// A real in-memory SQLite database behind the subset of the D1 API the Worker uses,
-// with every migration applied and foreign keys enforced as D1 does.
-async function d1() {
-  const db = new DatabaseSync(':memory:');
-  db.exec('PRAGMA foreign_keys = ON');
-  for (const file of (await readdir(new URL('../migrations/', import.meta.url))).sort()) {
-    db.exec(await readFile(new URL('../migrations/' + file, import.meta.url), 'utf8'));
-  }
-  return {
-    db,
-    prepare(sql) {
-      return {
-        bind(...args) {
-          const statement = db.prepare(sql);
-          return {
-            async first() { return statement.get(...args) ?? null; },
-            async all() { return { results: statement.all(...args) }; },
-            async run() { statement.run(...args); return { success: true }; },
-          };
-        },
-      };
-    },
-  };
-}
-
-// Turnstile always passes here; registration.test.mjs covers the bot check itself.
-const realFetch = globalThis.fetch;
-globalThis.fetch = async (url, init) => String(url).includes('/turnstile/v0/siteverify')
-  ? Response.json({ success: true, hostname: 'proofstreamapp.com' })
-  : realFetch(url, init);
-
-async function envWith() {
-  return {
-    DB: await d1(),
-    SESSION_SECRET: 'test-secret-value',
-    TURNSTILE_SECRET: 'turnstile-secret',
-    REGISTRATION_OPEN: 'true',
-    ASSETS: { fetch: async () => new Response('asset') },
-  };
-}
-
-async function signUp(env, email) {
-  const response = await worker.fetch(new Request(origin + '/api/register', {
-    method: 'POST',
-    headers: { origin, 'content-type': 'application/json' },
-    body: JSON.stringify({ name: email.split('@')[0], email, 'cf-turnstile-response': 'pass' }),
-  }), env);
-  return response.headers.get('set-cookie').split(';')[0];
-}
+import { origin, envWith, signUp, signIn } from './helpers.mjs';
 
 const hash = c => c.repeat(64);
 const project = (id, extra = {}) => ({
@@ -76,8 +23,8 @@ test('a saved project follows the account to another device', async () => {
   assert.equal(created.status, 201);
   assert.equal(created.headers.get('cache-control'), 'no-store');
 
-  // Signing in again elsewhere issues a new cookie for the same account.
-  const phone = await signUp(env, 'ADA@example.com');
+  // Signing in with the password elsewhere issues a new cookie for the same account.
+  const phone = await signIn(env, 'ADA@example.com');
   assert.notEqual(phone, undefined);
   assert.deepEqual(await list(env, phone), [project('p-1')]);
 
@@ -157,7 +104,7 @@ test('sign-out clears the cookie and is same-origin only', async () => {
   const env = await envWith();
   const out = await worker.fetch(new Request(origin + '/api/logout', { method: 'POST', headers: { origin } }), env);
   assert.equal(out.status, 200);
-  assert.match(out.headers.get('set-cookie'), /^ps_reg=; Max-Age=0; Path=\/; HttpOnly; Secure; SameSite=Lax$/);
+  assert.match(out.headers.get('set-cookie'), /^ps_session=; Max-Age=0; Path=\/; HttpOnly; Secure; SameSite=Lax$/);
   const cross = await worker.fetch(new Request(origin + '/api/logout', { method: 'POST', headers: { origin: 'https://evil.example' } }), env);
   assert.equal(cross.status, 403);
   assert.equal(cross.headers.get('set-cookie'), null);

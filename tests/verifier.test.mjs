@@ -14,7 +14,7 @@ const get = key => args[args.indexOf(key) + 1];
 const url = new URL(args.at(-1));
 if (url.hostname.endsWith('.workers.dev') && process.env.MOCK_NETWORK_FAILURE === '1') process.exit(6);
 let status = 200, type = 'text/html; charset=utf-8';
-let body = '<title>ProofStream — Register</title><form id="register-form">';
+let body = '<title>ProofStream — Sign in</title><form id="register-form">';
 let extras = '';
 if (url.pathname === '/' && process.env.MOCK_UNGATED === '1') body = '<title>ProofStream — Your work. Your timeline.</title>';
 if (url.hostname.startsWith('www.')) {
