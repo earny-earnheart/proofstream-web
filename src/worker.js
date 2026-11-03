@@ -247,7 +247,7 @@ async function login(request, env) {
 // Google vouches for who currently owns an email only for Gmail addresses and for Google
 // Workspace accounts whose `hd` claim matches the email's domain. Other addresses may
 // have been verified long ago, so they can open a new account but never take over or
-// link to an existing one.
+// link to an existing one, and a later sign-in that Google does vouch for replaces them.
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_ISSUERS = new Set(['https://accounts.google.com', 'accounts.google.com']);
@@ -339,14 +339,18 @@ async function googleCallback(request, env, url) {
     const existing = await env.DB.prepare('SELECT id, email_verified, (SELECT COUNT(*) FROM identities WHERE account_id = registrations.id) AS linked FROM registrations WHERE email = ?')
       .bind(profile.email).first();
     if (existing) {
-      // Never attach a second Google account, or one whose email Google cannot vouch for.
-      if (existing.linked || !profile.authoritative) return authFailed('exists');
+      // Only a Google account that vouches for the email may join an existing account,
+      // and never one already owned by another vouched Google account.
+      if (!profile.authoritative || (existing.email_verified && existing.linked)) return authFailed('exists');
       account = existing.id;
-      // Google proved who owns this email. Anyone else who set a password on it without
-      // that proof loses it, and every existing session for the account ends.
+      // Google proved who owns this email. Whoever held the account without that proof
+      // (a password, or a Google account that could not vouch for the email) loses
+      // access, and every existing session for the account ends.
       if (!existing.email_verified) {
-        await env.DB.prepare('UPDATE registrations SET email_verified = 1, password_hash = NULL, session_version = session_version + 1 WHERE id = ?')
-          .bind(account).run();
+        const taken = await env.DB.prepare('UPDATE registrations SET email_verified = 1, password_hash = NULL, session_version = session_version + 1 WHERE id = ? AND email_verified = 0 RETURNING id')
+          .bind(account).first();
+        if (!taken) return authFailed('exists');
+        await env.DB.prepare('DELETE FROM identities WHERE account_id = ?').bind(account).run();
       }
     } else {
       if (env.REGISTRATION_OPEN !== 'true') return authFailed('closed');

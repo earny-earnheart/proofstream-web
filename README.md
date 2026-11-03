@@ -59,8 +59,9 @@ Google vouches for who currently owns an email only for Gmail addresses and for 
 Workspace accounts whose `hd` claim matches the email's domain; a password sign-up
 proves nothing. So when such a Google sign-in arrives for an email whose account was
 never verified, that Google user takes the account over: any password on it is removed
-and every existing session ends. Other Google emails can open a new account but are
-refused (`/?auth=exists`) if the email already has one. An account linked to one Google
+and every existing session ends; that includes replacing a Google account that could
+not vouch for the email. Other Google emails can open a new account but are refused
+(`/?auth=exists`) if the email already has one. A vouched account linked to one Google
 account cannot be joined by another, and an email that belongs to a Google account
 cannot get a password by signing up.
 Registrations from the earlier email-only sign-up (no password, no Google link) can be

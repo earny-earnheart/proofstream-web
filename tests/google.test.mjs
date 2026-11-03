@@ -198,3 +198,16 @@ test('an account linked to one Google account cannot be joined by another', asyn
   assert.equal(env.DB.db.prepare('SELECT COUNT(*) AS n FROM identities').get().n, 1);
   assert.equal(await (await worker.fetch(get('/', first.session), env)).text(), 'asset:/');
 });
+
+test('a vouched Google sign-in replaces an unvouched Google account that got the email first', async () => {
+  const env = await withGoogle();
+  const early = await googleSignIn(env, claims({ sub: 'google-stale', hd: undefined }));
+  assert.equal(accounts(env)[0].email_verified, 0);
+  const owner = await googleSignIn(env, claims({ sub: 'google-owner' }));
+  assert.equal(owner.callback.headers.get('location'), '/');
+  assert.equal(owner.session.split('=')[1].split('.')[0], early.session.split('=')[1].split('.')[0]);
+  assert.equal(await (await worker.fetch(get('/', early.session), env)).text(), 'asset:/register');
+  assert.deepEqual(env.DB.db.prepare('SELECT subject FROM identities').all().map(r => r.subject), ['google-owner']);
+  // The unvouched account can no longer get in.
+  assert.equal((await googleSignIn(env, claims({ sub: 'google-stale', hd: undefined }))).callback.headers.get('location'), '/?auth=exists');
+});
