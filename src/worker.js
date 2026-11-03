@@ -501,6 +501,8 @@ async function googleCallback(request, env, url) {
         .bind(existing.id),
       env.DB.prepare("INSERT INTO identities (provider, subject, account_id, email, created_at) SELECT 'google', ?, ?, ?, ? WHERE changes() = 1 AND NOT EXISTS (SELECT 1 FROM identities WHERE account_id = ?) ON CONFLICT(provider, subject) DO NOTHING RETURNING account_id")
         .bind(profile.subject, existing.id, profile.email, now, existing.id),
+      // Links sent before the takeover belong to the account's previous holder's era.
+      env.DB.prepare('DELETE FROM email_tokens WHERE account_id = ? AND changes() = 1').bind(existing.id),
     ]);
     if (!verified.results.length || !link.results.length) return authFailed('exists');
     return signedIn(existing.id, verified.results[0].session_version);

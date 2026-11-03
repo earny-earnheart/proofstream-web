@@ -248,3 +248,17 @@ test('a takeover that lost a race changes nothing', async () => {
   assert.equal(session, undefined);
   assert.deepEqual(env.DB.db.prepare('SELECT subject FROM identities').all().map(r => r.subject), ['google-winner']);
 });
+
+test('a takeover cancels email links sent while the account was unverified', async () => {
+  const sent = [];
+  const env = await withGoogle({ EMAIL: { async send(m) { sent.push(m); return {}; } } });
+  const squatter = await signUp(env, 'ada@example.com');
+  assert.equal(sent.length, 1);
+  const owner = await googleSignIn(env);
+  assert.equal(owner.callback.headers.get('location'), '/');
+  assert.equal(env.DB.db.prepare('SELECT COUNT(*) AS n FROM email_tokens').get().n, 0);
+  const token = sent[0].text.match(/#([\w-]+)/)[1];
+  const verify = new Request(origin + '/api/email/verify', { method: 'POST', headers: { origin, 'content-type': 'application/json', cookie: owner.session }, body: JSON.stringify({ token }) });
+  assert.equal((await worker.fetch(verify, env)).status, 400);
+  assert.equal((await worker.fetch(get('/api/session', squatter), env).then(r => r.json())).registered, false);
+});

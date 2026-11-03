@@ -151,3 +151,4 @@ test('a failed send does not break sign-up', async () => {
   const env = await envWith({ EMAIL: { async send() { throw new Error('down'); } } });
   assert.notEqual(await signUp(env, 'ada@example.com'), undefined);
 });
+
