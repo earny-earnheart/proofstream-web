@@ -5,6 +5,7 @@ proofstream-web/
   migrations/0001_registrations.sql
   migrations/0002_projects.sql
   migrations/0003_sign_in.sql
+  migrations/0004_email_tokens.sql
   package.json
   public/.well-known/security.txt
   public/404.html
@@ -14,11 +15,16 @@ proofstream-web/
   public/index.html
   public/register.html
   public/register.js
+  public/reset.html
+  public/reset.js
   public/robots.txt
   public/sitemap.xml
   public/styles.css
+  public/verify.html
+  public/verify.js
   scripts/verify-production.sh
   src/worker.js
+  tests/email.test.mjs
   tests/google.test.mjs
   tests/helpers.mjs
   tests/projects.test.mjs

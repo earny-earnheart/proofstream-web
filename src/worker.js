@@ -213,6 +213,7 @@ async function register(request, env) {
     const claimed = await env.DB.prepare('UPDATE registrations SET password_hash = ?, session_version = session_version + 1 WHERE id = ? AND password_hash IS NULL AND email_verified = 0 AND NOT EXISTS (SELECT 1 FROM identities WHERE account_id = registrations.id) RETURNING session_version')
       .bind(await hashPassword(body.password), existing.id).first();
     if (!claimed) return taken;
+    if (emailEnabled(env)) await sendLink(env, existing.id, email, 'verify');
     return json({ ok: true, returning: true }, 200, { 'set-cookie': await sessionCookie(env, existing.id, claimed.session_version) });
   }
   if (env.REGISTRATION_OPEN !== 'true') return json({ error: 'Registration is closed right now.' }, 403);
@@ -223,6 +224,7 @@ async function register(request, env) {
   // A concurrent request may have won the insert; that account is not ours to sign into.
   const row = await env.DB.prepare('SELECT id, session_version FROM registrations WHERE email = ?').bind(email).first();
   if (row.id !== id) return taken;
+  if (emailEnabled(env)) await sendLink(env, id, email, 'verify');
   return json({ ok: true, returning: false }, 201, { 'set-cookie': await sessionCookie(env, id, row.session_version) });
 }
 
@@ -236,8 +238,142 @@ async function login(request, env) {
     : null;
   // Hash even when there is no password to compare, so timing does not reveal accounts.
   const ok = row?.password_hash ? await checkPassword(password, row.password_hash) : (await hashPassword(password), false);
-  if (!ok) return json({ error: 'That email and password do not match an account. Accounts made with Google sign in with Google.' }, 401);
+  if (!ok) return json({ error: 'That email and password do not match an account. Accounts made with Google sign in with Google, or reset your password.' }, 401);
   return json({ ok: true }, 200, { 'set-cookie': await sessionCookie(env, row.id, row.session_version) });
+}
+
+// Email links: password reset and email verification, sent with Cloudflare Email
+// Service through the EMAIL binding. Each link carries a random token; only its
+// SHA-256 is stored, it works once, it expires, and it only works while the account
+// still has the address it was sent to. A missing binding turns both features off.
+const EMAIL_FROM = { email: 'no-reply@' + CANONICAL_HOST, name: 'ProofStream' };
+const RESET_TTL = 60 * 60;
+const VERIFY_TTL = 60 * 60 * 24;
+const LINKS_PER_HOUR = 3;
+
+const emailEnabled = env => Boolean(env.EMAIL && env.DB && env.SESSION_SECRET);
+const nowSeconds = () => Math.floor(Date.now() / 1000);
+const tokenHash = async token => base64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)));
+
+const EMAILS = {
+  reset: {
+    path: '/reset',
+    subject: 'Reset your ProofStream password',
+    text: link => `Someone asked to reset the password for your ProofStream account.\n\nChoose a new password here (the link works once, for 1 hour):\n${link}\n\nIf this was not you, ignore this email and your password stays the same.`,
+    html: link => `<p>Someone asked to reset the password for your ProofStream account.</p><p><a href="${link}">Choose a new password</a> (the link works once, for 1 hour).</p><p>If this was not you, ignore this email and your password stays the same.</p>`,
+  },
+  verify: {
+    path: '/verify',
+    subject: 'Confirm your email for ProofStream',
+    text: link => `Confirm that this is your email address for ProofStream (the link works for 24 hours, in the browser where you are signed in):\n${link}\n\nIf you did not create a ProofStream account, ignore this email.`,
+    html: link => `<p>Confirm that this is your email address for ProofStream.</p><p><a href="${link}">Confirm my email</a> (the link works for 24 hours, in the browser where you are signed in).</p><p>If you did not create a ProofStream account, ignore this email.</p>`,
+  },
+};
+
+// Creates a link and emails it. Returns false when the hourly limit is reached or the
+// send fails; the caller decides what the visitor is told.
+async function sendLink(env, account, email, purpose) {
+  const now = nowSeconds();
+  const { n } = await env.DB.prepare('SELECT COUNT(*) AS n FROM email_tokens WHERE account_id = ? AND purpose = ? AND created_at > ?')
+    .bind(account, purpose, now - 3600).first();
+  if (n >= LINKS_PER_HOUR) return false;
+  const token = base64url(crypto.getRandomValues(new Uint8Array(32)));
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM email_tokens WHERE expires_at <= ?').bind(now),
+    env.DB.prepare('INSERT INTO email_tokens (token_hash, account_id, purpose, email, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(await tokenHash(token), account, purpose, email, now, now + (purpose === 'reset' ? RESET_TTL : VERIFY_TTL)),
+  ]);
+  const template = EMAILS[purpose];
+  const link = `${CANONICAL_ORIGIN}${template.path}#${token}`;
+  try {
+    await env.EMAIL.send({ to: email, from: EMAIL_FROM, subject: template.subject, text: template.text(link), html: template.html(link) });
+    return true;
+  } catch (error) {
+    console.error('email send failed', purpose, error?.message);
+    return false;
+  }
+}
+
+// Uses up a link: returns { account_id, email } if it was valid, else null. The
+// DELETE makes it single-use even when two requests race.
+async function useLink(env, token, purpose) {
+  if (typeof token !== 'string' || token.length < 20 || token.length > 100) return null;
+  const row = await env.DB.prepare('DELETE FROM email_tokens WHERE token_hash = ? AND purpose = ? AND expires_at > ? RETURNING account_id, email')
+    .bind(await tokenHash(token), purpose, nowSeconds()).first();
+  if (!row) return null;
+  const current = await env.DB.prepare('SELECT email FROM registrations WHERE id = ?').bind(row.account_id).first();
+  return current && current.email === row.email ? row : null;
+}
+
+// Step 1 of a reset: always gives the same answer, so it does not reveal accounts.
+async function forgotPassword(request, env) {
+  if (!emailEnabled(env)) return json({ error: 'Password reset is not available right now.' }, 503);
+  const { body, response } = await passwordForm(request, env);
+  if (response) return response;
+  const email = String(body.email ?? '').trim().toLowerCase();
+  if (email.length > 254 || !EMAIL_PATTERN.test(email)) return json({ error: 'Enter a valid email address.' }, 400);
+  const row = await env.DB.prepare('SELECT id FROM registrations WHERE email = ?').bind(email).first();
+  if (row) await sendLink(env, row.id, email, 'reset');
+  return json({ ok: true, message: 'If an account uses that email, a reset link is on its way. Check your inbox.' });
+}
+
+// Step 2: the link proves the visitor owns the email, so the reset also verifies it.
+// If the account was unverified, whoever held it without that proof (an earlier
+// password, or a Google account that could not vouch for the email) loses access. The
+// new password is set, every session ends, and this browser is signed in.
+async function resetPassword(request, env) {
+  if (request.headers.get('origin') !== CANONICAL_ORIGIN) return json({ error: 'Cross-origin requests are not allowed.' }, 403);
+  if (!emailEnabled(env)) return json({ error: 'Password reset is not available right now.' }, 503);
+  let body;
+  try { body = await readSubmission(request); } catch { body = null; }
+  if (!body || typeof body !== 'object') return json({ error: 'Send the form as JSON.' }, 400);
+  if (!validPassword(body.password)) return json({ error: `Choose a password of ${PASSWORD_MIN} to ${PASSWORD_MAX} characters.` }, 400);
+  const hash = await hashPassword(body.password);
+  const link = await useLink(env, body.token, 'reset');
+  if (!link) return json({ error: 'This reset link is invalid, used or expired. Ask for a new one.' }, 400);
+  const [, updated] = await env.DB.batch([
+    env.DB.prepare('DELETE FROM identities WHERE account_id = ? AND EXISTS (SELECT 1 FROM registrations WHERE id = ? AND email_verified = 0)')
+      .bind(link.account_id, link.account_id),
+    env.DB.prepare('UPDATE registrations SET password_hash = ?, email_verified = 1, session_version = session_version + 1 WHERE id = ? RETURNING session_version')
+      .bind(hash, link.account_id),
+    env.DB.prepare("DELETE FROM email_tokens WHERE account_id = ? AND purpose = 'reset'").bind(link.account_id),
+  ]);
+  if (!updated.results.length) return json({ error: 'This reset link is invalid, used or expired. Ask for a new one.' }, 400);
+  return json({ ok: true }, 200, { 'set-cookie': await sessionCookie(env, link.account_id, updated.results[0].session_version) });
+}
+
+// Verification only counts in a browser signed in to the same account. Otherwise the
+// real owner of an address, clicking a link from a sign-up someone else made with it,
+// would vouch for that stranger's password.
+async function verifyEmail(request, env, account) {
+  if (request.headers.get('origin') !== CANONICAL_ORIGIN) return json({ error: 'Cross-origin requests are not allowed.' }, 403);
+  if (!emailEnabled(env)) return json({ error: 'Email verification is not available right now.' }, 503);
+  let body;
+  try { body = await readSubmission(request); } catch { body = null; }
+  const tokenRow = typeof body?.token === 'string' && body.token.length <= 100
+    ? await env.DB.prepare("SELECT account_id FROM email_tokens WHERE token_hash = ? AND purpose = 'verify'").bind(await tokenHash(body.token)).first()
+    : null;
+  if (tokenRow && tokenRow.account_id !== account) {
+    return json({ error: 'Sign in to the account this link was sent for, then open the link again.' }, 403);
+  }
+  const link = tokenRow && await useLink(env, body.token, 'verify');
+  if (!link || link.account_id !== account) return json({ error: 'This confirmation link is invalid, used or expired. Send a new one.' }, 400);
+  await env.DB.batch([
+    env.DB.prepare('UPDATE registrations SET email_verified = 1 WHERE id = ?').bind(account),
+    env.DB.prepare("DELETE FROM email_tokens WHERE account_id = ? AND purpose = 'verify'").bind(account),
+  ]);
+  return json({ ok: true });
+}
+
+async function resendVerification(request, env, account) {
+  if (request.headers.get('origin') !== CANONICAL_ORIGIN) return json({ error: 'Cross-origin requests are not allowed.' }, 403);
+  if (!emailEnabled(env)) return json({ error: 'Email verification is not available right now.' }, 503);
+  const row = await env.DB.prepare('SELECT email, email_verified FROM registrations WHERE id = ?').bind(account).first();
+  if (row.email_verified) return json({ ok: true, verified: true });
+  if (!(await sendLink(env, account, row.email, 'verify'))) {
+    return json({ error: 'We could not send another email right now. Try again in an hour.' }, 429);
+  }
+  return json({ ok: true, verified: false });
 }
 
 // Google sign-in: the OAuth authorization-code flow with PKCE. The state and code
@@ -507,11 +643,20 @@ export default {
       url.protocol = 'https:';
       url.port = '';
       response = new Response(null, { status: 301, headers: { location: url.href } });
-    // 2. Sign-up, sign-in, sign-out and project saves are the only writes; everything else is GET/HEAD.
+    // 2. Sign-up, sign-in, sign-out, email links and project saves are the only writes; everything else is GET/HEAD.
     } else if (url.pathname === '/api/register' && request.method === 'POST') {
       response = await register(request, env);
     } else if (url.pathname === '/api/login' && request.method === 'POST') {
       response = await login(request, env);
+    } else if (url.pathname === '/api/password/forgot' && request.method === 'POST') {
+      response = await forgotPassword(request, env);
+    } else if (url.pathname === '/api/password/reset' && request.method === 'POST') {
+      response = await resetPassword(request, env);
+    } else if ((url.pathname === '/api/email/verify' || url.pathname === '/api/email/resend') && request.method === 'POST') {
+      const account = await accountId(request, env);
+      if (!account) response = json({ error: 'Sign in first, then open the link again.' }, 401);
+      else if (url.pathname === '/api/email/verify') response = await verifyEmail(request, env, account);
+      else response = await resendVerification(request, env, account);
     } else if (url.pathname === '/api/logout' && request.method === 'POST') {
       response = logout(request);
     } else if (url.pathname === '/api/projects' || url.pathname.startsWith('/api/projects/')) {
@@ -527,7 +672,15 @@ export default {
         headers: { 'cache-control': 'no-store' },
       });
     } else if (url.pathname === '/api/session') {
-      response = json({ registered: await isRegistered(request, env), registrationOpen: env.REGISTRATION_OPEN === 'true', googleSignIn: googleEnabled(env) });
+      const account = await accountId(request, env);
+      const verified = account && (await env.DB.prepare('SELECT email_verified FROM registrations WHERE id = ?').bind(account).first()).email_verified === 1;
+      response = json({
+        registered: Boolean(account),
+        registrationOpen: env.REGISTRATION_OPEN === 'true',
+        googleSignIn: googleEnabled(env),
+        emailLinks: emailEnabled(env),
+        ...(account ? { emailVerified: verified } : {}),
+      });
     } else if (url.pathname === '/auth/google') {
       response = await googleStart(env);
     } else if (url.pathname === '/auth/google/callback') {

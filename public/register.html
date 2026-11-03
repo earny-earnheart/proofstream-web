@@ -11,12 +11,14 @@
 <form id="register-form" method="post" action="/api/register" novalidate>
 <label id="name-field">Name<input name="name" id="register-name" autocomplete="name" maxlength="100" required></label>
 <label>Email<input name="email" id="register-email" type="email" autocomplete="email" maxlength="254" required></label>
-<label>Password<input name="password" id="register-password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
-<p class="form-note" id="password-note">At least 10 characters. There is no password reset yet, so keep it somewhere safe, or use Google.</p>
+<label id="password-field">Password<input name="password" id="register-password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
+<p class="form-note" id="password-note">At least 10 characters. We will email you a link to confirm your address.</p>
 <label class="hp" aria-hidden="true">Website<input name="website" tabindex="-1" autocomplete="off"></label>
 <div class="cf-turnstile" data-sitekey="0x4AAAAAAFxNFLyzIiuPb_D6"></div>
 <button type="submit" class="primary full" id="register-submit">Create account ↗</button>
 <p class="form-error" role="alert"></p>
+<p class="form-success" role="status"></p>
+<button type="button" class="text-button" id="forgot-link" hidden>Forgot your password?</button>
 </form>
 <div class="notice">Your name and email are stored by ProofStream to manage your account. Files you fingerprint stay on your device.</div>
 </div>
