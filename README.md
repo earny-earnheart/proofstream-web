@@ -48,7 +48,7 @@ serves `public/register.html` and `/app.js` returns 403. Creators sign in one of
   salted PBKDF2-SHA256 at 100,000 iterations (the Workers maximum). Signing up again
   with an email that already has an account returns 409 and no cookie. Wrong passwords
   and unknown emails get the same 401. Both routes are same-origin only and need a
-  Cloudflare Turnstile pass. There is no password reset or email verification yet.
+  Cloudflare Turnstile pass. See "Email links" for password reset and verification.
 - **Google.** `/auth/google` starts the OAuth authorization-code flow with PKCE; the
   state and verifier ride in a signed 10-minute `ps_oauth` cookie. The callback accepts
   only ID tokens for our client ID from Google's issuer with `email_verified: true`,
@@ -158,6 +158,29 @@ preserved. The site's own pages need no inline scripts or styles, and the CSP ha
 injected scripts. Waveform heights use static CSS classes. Contact and company text are supplied by
 the owner; no claim of statutory notarization is made.
 
+## Email links: password reset and verification
+
+Sent with Cloudflare Email Service through the `send_email` binding `EMAIL`, from
+`no-reply@proofstreamapp.com`. The domain must be onboarded once:
+`npx wrangler@latest email sending enable proofstreamapp.com` (it adds SPF/DKIM DNS
+records). Without the binding both features switch off (`emailLinks: false` in
+`/api/session`) and sign-up still works.
+
+- Links carry a random token in the URL fragment (`/reset#…`, `/verify#…`), so it never
+  reaches server logs or referrers. D1 `email_tokens` stores only its SHA-256. Each link
+  works once, expires (reset 1 hour, verify 24 hours) and only while the account still
+  has the address it was sent to. At most 3 links per purpose per account per hour.
+- **Reset.** `POST /api/password/forgot` (email, Turnstile) always answers the same way.
+  `POST /api/password/reset` (token, password) sets the password, marks the email
+  verified, ends every session and signs this browser in. On an unverified account it
+  also removes any Google link that could not vouch for the email, so a creator whose
+  address was squatted can recover the account.
+- **Verification.** Password sign-ups get a confirmation email. `POST /api/email/verify`
+  only counts in a browser signed in to the same account; otherwise the real owner of an
+  address, clicking a link from a sign-up a stranger made with it, would vouch for the
+  stranger's password. `POST /api/email/resend` sends another. Unverified creators see a
+  banner in the workspace; nothing is blocked yet.
+
 ## Exact commands (run from this folder)
 
 1. Check the files/tests locally:
@@ -177,6 +200,11 @@ the owner; no claim of statutory notarization is made.
 4. Validate the package before cutover:
    ```sh
    npx wrangler@latest deploy --dry-run
+   ```
+   If `migrations/` has new files, apply them first (export
+   `CLOUDFLARE_ACCOUNT_ID=7914583bf80f67154ca9364681c0af85` if Wrangler sees several accounts):
+   ```sh
+   npx wrangler@latest d1 migrations apply proofstream-registrations --remote
    ```
 5. Replace the existing placeholder:
    ```sh

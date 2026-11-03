@@ -35,7 +35,7 @@ test('a password sign-up returns 201 with a secure session cookie that unlocks t
   const cookie = cookieOf(response);
   assert.equal(await (await worker.fetch(get('/', cookie), env)).text(), 'asset:/');
   assert.equal((await worker.fetch(get('/app.js', cookie), env)).status, 200);
-  assert.deepEqual(await (await worker.fetch(get('/api/session', cookie), env)).json(), { registered: true, registrationOpen: true, googleSignIn: false });
+  assert.deepEqual(await (await worker.fetch(get('/api/session', cookie), env)).json(), { registered: true, registrationOpen: true, googleSignIn: false, emailLinks: false, emailVerified: false });
 });
 
 test('an existing email cannot be signed into by signing up again', async () => {
