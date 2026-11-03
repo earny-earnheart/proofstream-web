@@ -27,15 +27,23 @@ validates name/email, stores the creator in D1 `proofstream-registrations` and s
 cookie (HttpOnly, Secure, SameSite=Lax, 1 year). Repeat emails sign back in. `GET
 /api/session` reports `{registered, registrationOpen}`. Set `REGISTRATION_OPEN` to
 `"false"` in `wrangler.jsonc` to close new sign-ups; existing registrants still get in.
-The cookie carries a signed issue time (checked server-side, 1-year limit) and is signed with the `SESSION_SECRET` secret; without it, everyone stays gated. To revoke someone, delete their row: `npx wrangler@latest d1 execute proofstream-registrations --remote --command "DELETE FROM registrations WHERE email = 'person@example.com'"`.
+The cookie carries a signed issue time (checked server-side, 1-year limit) and is signed with the `SESSION_SECRET` secret; without it, everyone stays gated. Every sign-up and sign-back-in must also pass Cloudflare Turnstile (widget sitekey
+`0x4AAAAAAFxNFLyzIiuPb_D6`, in `public/register.html`). The Worker checks each token with
+Cloudflare's siteverify using the `TURNSTILE_SECRET` secret; without that secret,
+registration returns 503 "temporarily unavailable" (it fails closed). To revoke someone, delete their row: `npx wrangler@latest d1 execute proofstream-registrations --remote --command "DELETE FROM registrations WHERE email = 'person@example.com'"`.
 
 One-time setup before the first deploy with the gate:
 ```sh
 npx wrangler@latest d1 create proofstream-registrations   # paste database_id into wrangler.jsonc
 npx wrangler@latest d1 migrations apply proofstream-registrations --remote
 npx wrangler@latest secret put SESSION_SECRET             # paste a long random value, e.g. openssl rand -hex 32
+pbpaste | tr -d '[:space:]' | npx wrangler@latest secret put TURNSTILE_SECRET   # copy the widget's Secret Key first
+npx wrangler@latest secret list                           # names only: expect SESSION_SECRET and TURNSTILE_SECRET
 ```
-Local testing: put `SESSION_SECRET=...` in `.dev.vars` (gitignored), then
+Run secret commands from this folder so they reach `proofstream-web` in the Pantheon
+Enterprise account. Piping from the clipboard avoids saving an empty value from the hidden prompt.
+Local testing: put `SESSION_SECRET=...` and Cloudflare's always-pass test secret
+`TURNSTILE_SECRET=1x0000000000000000000000000000000AA` in `.dev.vars` (gitignored), then
 `npx wrangler@latest d1 migrations apply proofstream-registrations --local` and `npx wrangler@latest dev`.
 
 ## Deployment target and routing
@@ -46,7 +54,30 @@ Local testing: put `SESSION_SECRET=...` in `.dev.vars` (gitignored), then
 - `www.proofstreamapp.com` redirects to apex, preserving path and query.
 - `workers.dev` and preview URLs stay disabled.
 - Exactly two Custom Domain routes; no wildcard route.
-- No DNS, nameserver, other Worker, Zero Trust, WAF or Bot setting changes.
+- No DNS, nameserver, other Worker, Zero Trust or WAF changes.
+
+## Cloudflare bot and edge settings
+
+These zone settings are on and the site is built to work with them:
+
+- **Bot Fight Mode / JavaScript Detections: on.** Cloudflare injects an inline script into
+  every HTML page. The Worker puts a fresh `nonce` in each `Content-Security-Policy`
+  header and Cloudflare copies it onto that script, so it runs. Do not set the CSP in a
+  `<meta>` tag or send `Cache-Control: no-transform` on HTML; either stops this working.
+- **Turnstile:** guards `POST /api/register` (see Registration gate). The CSP allows
+  `https://challenges.cloudflare.com` for its script and frame, and nothing else remote.
+- **Web Analytics (automatic setup): on, intended.** Cloudflare stamps its beacon with
+  the nonce, so it runs and reports to this domain's `/cdn-cgi/rum`.
+- **Google tag gateway (`GTM-T4W5LNL2`): on, but blocked.** Cloudflare injects its tags
+  without the nonce, so the CSP blocks them and the browser console shows two
+  "inline script" CSP errors. Turn the gateway off in Tag management to clear them.
+  Allowing GTM would need the CSP loosened for Google's scripts; do not add
+  `unsafe-inline`.
+
+Anything Cloudflare injects with the nonce can run, so review new zone features that
+inject scripts before enabling them. Cloudflare's injections only happen at the edge:
+local tests and `wrangler dev` do not show them, so check the live site in a browser
+console after changing these settings.
 
 `404-page` is intentional: the app uses hash navigation (`/#verify`, `/#library`,
 `/#project/...`) inside the single root page. Hash fragments are never sent to the
@@ -56,8 +87,9 @@ unknown server paths must stay real HTTP 404 responses.
 The Worker redirects www first, then restricts methods to GET/HEAD, serves `/health`,
 normalizes trailing slashes and delegates assets. Security headers decorate all
 responses, including redirects, errors and health. Asset content type and ETag are
-preserved. No inline scripts/styles, `unsafe-inline` or `unsafe-eval` are needed:
-waveform heights use static CSS classes. Contact and company text are supplied by
+preserved. The site's own pages need no inline scripts or styles, and the CSP has no
+`unsafe-inline` or `unsafe-eval`; the per-response nonce exists only for Cloudflare's
+injected scripts. Waveform heights use static CSS classes. Contact and company text are supplied by
 the owner; no claim of statutory notarization is made.
 
 ## Exact commands (run from this folder)
