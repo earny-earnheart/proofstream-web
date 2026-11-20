@@ -635,6 +635,14 @@ async function serveAsset(request, env, path) {
   }
 }
 
+// Admin assets, matched after decoding and case-folding so an encoded or differently cased
+// path (/%61dmin.html, /ADMIN.js) cannot reach the static files around the gate.
+function isAdminPath(pathname) {
+  let decoded;
+  try { decoded = decodeURIComponent(pathname); } catch { return true; }
+  return /^\/+admin(\.html|\.js)?$/i.test(decoded);
+}
+
 // Gated responses differ per visitor, so shared caches must not reuse them.
 function privateResponse(response) {
   const headers = new Headers(response.headers);
@@ -699,7 +707,7 @@ export default {
     } else if (url.pathname === '/auth/google/callback') {
       response = await googleCallback(request, env, url);
     // The verification queue page exists only for admins; everyone else gets a plain 404.
-    } else if (url.pathname === '/admin' || url.pathname === '/admin.html' || url.pathname === '/admin.js') {
+    } else if (isAdminPath(url.pathname)) {
       response = (await isAdmin(env, await accountId(request, env)))
         ? privateResponse(await serveAsset(request, env))
         : new Response('Not found\n', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });

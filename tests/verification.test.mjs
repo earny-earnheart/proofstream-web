@@ -53,6 +53,8 @@ test('only verified admins can use the admin API and page', async () => {
   assert.equal((await call(env, get('/api/v1/admin/verification-queue', ada))).status, 404);
   assert.equal((await worker.fetch(get('/admin', ada), env)).status, 404);
   assert.equal((await worker.fetch(get('/admin.js'), env)).status, 404);
+  for (const path of ['/%61dmin.html', '/ADMIN.js', '/Admin', '//admin.html', '/admin%2Ejs', '/%E0%A4%A'])
+    assert.equal((await worker.fetch(get(path, ada), env)).status, 404, path);
   assert.equal((await call(env, get('/api/v1/admin/verification-queue', admin))).status, 200);
   assert.equal((await worker.fetch(get('/admin', admin), env)).status, 200);
   // An admin address whose email is not verified is not an admin.
@@ -134,6 +136,7 @@ test('anchoring registers a verified claim once, and records the transaction', a
   const accountId = env.DB.db.prepare("SELECT id FROM registrations WHERE email = 'ada@example.com'").get().id;
   assert.equal(args.claimant, accountAddress(accountId));
   assert.equal(args.splits[0].basisPoints, 10000);
+  assert(!JSON.stringify(args.splits).includes('123456789'));
   const row = env.DB.db.prepare('SELECT * FROM recording_versions').get();
   assert.equal(row.anchor_status, 'anchored');
   assert.equal(args.payloadHash, row.payload_hash);

@@ -17,10 +17,12 @@ export const accountAddress = account => getAddress('0x' + keccak256(toBytes('pr
 
 const code = value => stringToHex(value, { size: 32 });
 
-// The contract's Split[] for a claim: identities are hashed, roles and territories are codes.
+// The contract's Split[] for a claim: roles and territories are codes, and each beneficiary
+// is an opaque reference to its position in the claim. Identifiers such as IPI numbers stay
+// out of it (they are short enough to brute-force from a hash); payloadHash commits to them.
 export function splitsFor(recordingId, claim) {
   return claim.rights.map((r, index) => ({
-    beneficiaryHash: keccak256(toBytes(`proofstream:beneficiary:${recordingId}:${index}:${r.role}:${r.ipi ?? ''}`)),
+    beneficiaryHash: keccak256(toBytes(`proofstream:beneficiary:${recordingId}:${index}`)),
     basisPoints: r.split_bps,
     rightType: code(r.role),
     territory: code(r.territory),
