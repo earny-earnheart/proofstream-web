@@ -77,6 +77,8 @@ test('public verify lists the claim without sign-in, unverified, and the hash ch
   assert.equal(missing.status, 404);
   assert.equal((await missing.json()).found, false);
   assert.equal((await worker.fetch(get('/api/v1/verify?isrc=nope'), env)).status, 400);
+  assert.equal((await worker.fetch(get('/api/v1/verify/bad'), env)).status, 400, 'a bad ISRC is a 400, not a sign-in prompt');
+  assert.equal((await worker.fetch(get('/api/v1/verify/%E0%A4%A'), env)).status, 400);
 });
 
 test('nobody can squat an ISRC or audio: a second account\'s claim makes both contested', async () => {

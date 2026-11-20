@@ -27,7 +27,7 @@ const HASH = /^[a-f0-9]{64}$/;
 const RECORDING_PATH = /^\/api\/v1\/recordings\/(rec_[a-f0-9-]{36})(\/claims|\/verification-request)?$/;
 const ADMIN_PATH = /^\/api\/v1\/admin\/recordings\/(rec_[a-f0-9-]{36})\/(verify|reject|revoke)$/;
 const MAX_EVIDENCE = 10;
-const VERIFY_PATH = /^\/api\/v1\/verify\/([A-Za-z0-9-]{12,15})$/;
+const VERIFY_PATH = /^\/api\/v1\/verify\/([^/]{1,40})$/;
 const ERRORS = 'https://proofstreamapp.com/errors/';
 
 const problem = (json, status, slug, title, detail, extra = {}) =>
@@ -396,7 +396,11 @@ export async function recordingsApi(request, env, url, { account, json, canonica
   const method = request.method;
   if (pathname === '/api/v1/verify' && (method === 'GET' || method === 'HEAD')) return verify(env, url.searchParams.get('isrc'), json);
   const verifyMatch = pathname.match(VERIFY_PATH);
-  if (verifyMatch && (method === 'GET' || method === 'HEAD')) return verify(env, verifyMatch[1], json);
+  if (verifyMatch && (method === 'GET' || method === 'HEAD')) {
+    let isrc = null;
+    try { isrc = decodeURIComponent(verifyMatch[1]); } catch {}
+    return verify(env, isrc, json);
+  }
 
   const id = await account();
   if (!id) return problem(json, 401, 'unauthorized', 'Sign in required', 'Sign in to use the recordings API.');
