@@ -1,3 +1,5 @@
+import { recordingsApi } from './recordings.js';
+
 // ProofStream's thin Cloudflare Workers Static Assets front controller.
 // The only routes configured for production are the apex and www custom domains.
 const CANONICAL_HOST = 'proofstreamapp.com';
@@ -589,12 +591,19 @@ async function saveProject(request, env, account, id) {
   let project;
   try { project = cleanProject(id, JSON.parse(raw)); } catch { return json({ error: 'The project record is not valid.' }, 400); }
 
-  const exists = await env.DB.prepare('SELECT id FROM projects WHERE account_id = ? AND id = ?').bind(account, id).first();
+  const exists = await env.DB.prepare('SELECT data FROM projects WHERE account_id = ? AND id = ?').bind(account, id).first();
   if (!exists) {
     const { n } = await env.DB.prepare('SELECT COUNT(*) AS n FROM projects WHERE account_id = ?').bind(account).first();
     if (n >= MAX_PROJECTS) return json({ error: 'You have reached the project limit.' }, 409);
   }
   const now = new Date().toISOString();
+  // Timestamps are the server's: a new project or milestone gets the current time, and a
+  // milestone already saved keeps every field it was saved with, so records cannot be
+  // backdated or have their fingerprint swapped afterwards.
+  const stored = exists ? JSON.parse(exists.data) : null;
+  const saved = new Map((stored?.milestones || []).map(m => [m.id, m]));
+  project.createdAt = stored?.createdAt || now;
+  project.milestones = project.milestones.map(m => saved.get(m.id) || { ...m, createdAt: now });
   await env.DB.prepare('INSERT INTO projects (account_id, id, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(account_id, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at')
     .bind(account, id, JSON.stringify(project), project.createdAt, now).run();
   return json({ ok: true, project }, exists ? 200 : 201);
@@ -645,7 +654,7 @@ export default {
       url.protocol = 'https:';
       url.port = '';
       response = new Response(null, { status: 301, headers: { location: url.href } });
-    // 2. Sign-up, sign-in, sign-out, email links and project saves are the only writes; everything else is GET/HEAD.
+    // 2. Sign-up, sign-in, sign-out, email links, project saves and the v1 recordings API are the only writes; everything else is GET/HEAD.
     } else if (url.pathname === '/api/register' && request.method === 'POST') {
       response = await register(request, env);
     } else if (url.pathname === '/api/login' && request.method === 'POST') {
@@ -663,6 +672,8 @@ export default {
       response = logout(request);
     } else if (url.pathname === '/api/projects' || url.pathname.startsWith('/api/projects/')) {
       response = await projectsApi(request, env, url);
+    } else if (url.pathname.startsWith('/api/v1/')) {
+      response = await recordingsApi(request, env, url, { account: () => accountId(request, env), json, canonicalOrigin: CANONICAL_ORIGIN });
     } else if (request.method !== 'GET' && request.method !== 'HEAD') {
       response = new Response('Method not allowed\n', {
         status: 405,

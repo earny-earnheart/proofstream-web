@@ -14,6 +14,8 @@ const put = (cookie, id, body, headers = {}) => new Request(`${origin}/api/proje
   headers: { origin, 'content-type': 'application/json', ...(cookie ? { cookie } : {}), ...headers },
   body: typeof body === 'string' ? body : JSON.stringify(body),
 });
+// Timestamps are set by the server, so compare records without them.
+const untimed = p => ({ ...p, createdAt: undefined, milestones: p.milestones.map(m => ({ ...m, createdAt: undefined })) });
 const list = async (env, cookie) => (await (await worker.fetch(new Request(origin + '/api/projects', { headers: { cookie } }), env)).json()).projects;
 
 test('a saved project follows the account to another device', async () => {
@@ -26,7 +28,7 @@ test('a saved project follows the account to another device', async () => {
   // Signing in with the password elsewhere issues a new cookie for the same account.
   const phone = await signIn(env, 'ADA@example.com');
   assert.notEqual(phone, undefined);
-  assert.deepEqual(await list(env, phone), [project('p-1')]);
+  assert.deepEqual((await list(env, phone)).map(untimed), [untimed(project('p-1'))]);
 
   const updated = project('p-1', { name: 'Renamed' });
   assert.equal((await worker.fetch(put(phone, 'p-1', updated), env)).status, 200);
@@ -53,7 +55,7 @@ test('only allow-listed metadata is stored, so file contents cannot reach the da
   assert.equal(response.status, 201);
   const stored = env.DB.db.prepare('SELECT data FROM projects').get().data;
   assert(!stored.includes('UklGRiQ'), 'file-like payload was stored');
-  assert.deepEqual(JSON.parse(stored), project('p-1'));
+  assert.deepEqual(untimed(JSON.parse(stored)), untimed(project('p-1')));
 });
 
 test('rejects invalid records, oversized bodies, cross-origin writes and anonymous callers', async () => {
@@ -79,6 +81,28 @@ test('rejects invalid records, oversized bodies, cross-origin writes and anonymo
   assert.equal((await worker.fetch(put(cookie + 'x', 'p-1', project('p-1')), env)).status, 401);
   assert.equal((await worker.fetch(put(cookie, 'bad%20id', project('bad id')), env)).status, 404);
   assert.deepEqual(await list(env, cookie), []);
+});
+
+test('the server sets timestamps and saved milestones cannot be changed or backdated', async () => {
+  const env = await envWith();
+  const cookie = await signUp(env, 'ada@example.com');
+  const before = new Date().toISOString();
+  const first = await (await worker.fetch(put(cookie, 'p-1', project('p-1')), env)).json();
+  assert(first.project.createdAt >= before, 'project time is the server\'s');
+  assert(first.project.milestones[0].createdAt >= before, 'milestone time is the server\'s');
+
+  // Resending the project with a backdated, re-fingerprinted milestone changes nothing.
+  const tampered = project('p-1', { createdAt: '2001-01-01T00:00:00.000Z' });
+  tampered.milestones[0] = { ...tampered.milestones[0], hash: hash('b'), createdAt: '2001-01-01T00:00:00.000Z' };
+  const second = await (await worker.fetch(put(cookie, 'p-1', tampered), env)).json();
+  assert.deepEqual(second.project.milestones[0], first.project.milestones[0]);
+  assert.equal(second.project.createdAt, first.project.createdAt);
+
+  // A new milestone gets its own server time; the first one is untouched.
+  const added = { ...tampered, milestones: [{ ...tampered.milestones[0], id: 'm-2', createdAt: '2001-01-01T00:00:00.000Z' }, ...tampered.milestones] };
+  const third = await (await worker.fetch(put(cookie, 'p-1', added), env)).json();
+  assert(third.project.milestones[0].createdAt >= before);
+  assert.deepEqual(third.project.milestones[1], first.project.milestones[0]);
 });
 
 test('caps the number of projects per account', async () => {
