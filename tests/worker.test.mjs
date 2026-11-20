@@ -146,3 +146,12 @@ test('deployment configuration preserves the existing worker, account and only t
     { pattern: 'www.proofstreamapp.com', custom_domain: true },
   ]);
 });
+
+test('anchoring is configured with a cron, the registry and no private key in the config', async () => {
+  const raw = await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8');
+  const config = JSON.parse(raw);
+  assert.deepEqual(config.triggers.crons, ['*/10 * * * *']);
+  assert.match(config.vars.REGISTRY_ADDRESS, /^0x[0-9a-fA-F]{40}$/);
+  assert.match(config.vars.CHAIN_RPC_URL, /^https:\/\//);
+  assert(!/ANCHOR_PRIVATE_KEY|ADMIN_EMAILS/.test(raw), 'secrets belong in wrangler secret, not the config');
+});
