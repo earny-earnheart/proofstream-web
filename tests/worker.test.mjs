@@ -166,7 +166,7 @@ test('every browser script parses', () => {
 
 test('media answers byte-range requests so Safari can play the hero video', async () => {
   const bytes = new Uint8Array(1000).map((_, i) => i % 256);
-  const env = envWith(() => new Response(bytes, { headers: { 'content-type': 'video/mp4' } }));
+  const env = envWith(() => new Response(bytes, { headers: { 'content-type': 'video/mp4', 'content-length': '1000' } }));
   const get = range => worker.fetch(new Request(origin + '/media/proofstream-hero.mp4', { headers: range ? { range } : {} }), env);
 
   const whole = await get();
@@ -187,4 +187,13 @@ test('media answers byte-range requests so Safari can play the hero video', asyn
   assert.equal((await get('bytes=2000-')).status, 416);
   assert.equal(first.headers.get('content-type'), 'video/mp4');
   secure(first);
+});
+
+test('large or unsized media streams through whole instead of being buffered', async () => {
+  for (const length of [String(9 * 1024 * 1024), null]) {
+    const env = envWith(() => new Response('x', { headers: { 'content-type': 'video/mp4', ...(length ? { 'content-length': length } : {}) } }));
+    const response = await worker.fetch(new Request(origin + '/media/big.mp4', { headers: { range: 'bytes=0-1' } }), env);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-range'), null);
+  }
 });

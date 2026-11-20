@@ -645,9 +645,15 @@ function isAdminPath(pathname) {
 
 // Hero video and other media: browsers seek with byte ranges, and Safari will not play a
 // <video> whose server ignores them, so answer Range with 206 Partial Content.
+const MEDIA_RANGE_MAX = 8 * 1024 * 1024;
+
 async function mediaAsset(request, env) {
   const full = await serveAsset(new Request(request.url), env);
   if (!full.ok) return full;
+  // Only small media is held in memory to slice; anything larger (or of unknown size)
+  // streams through whole.
+  const size = Number(full.headers.get('content-length'));
+  if (!(size > 0 && size <= MEDIA_RANGE_MAX)) return full;
   const body = await full.arrayBuffer();
   const total = body.byteLength;
   const headers = new Headers(full.headers);
