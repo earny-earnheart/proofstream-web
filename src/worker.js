@@ -650,11 +650,29 @@ const MEDIA_RANGE_MAX = 8 * 1024 * 1024;
 async function mediaAsset(request, env) {
   const full = await serveAsset(new Request(request.url), env);
   if (!full.ok) return full;
-  // Only small media is held in memory to slice; anything larger (or of unknown size)
-  // streams through whole.
-  const size = Number(full.headers.get('content-length'));
-  if (!(size > 0 && size <= MEDIA_RANGE_MAX)) return full;
-  const body = await full.arrayBuffer();
+  // Only small media is held in memory to slice. The asset store may not send a length, so
+  // read in chunks: past the cap, stream what was read plus the rest through whole.
+  if (Number(full.headers.get('content-length')) > MEDIA_RANGE_MAX || !full.body) return full;
+  const reader = full.body.getReader();
+  const chunks = [];
+  let read = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    read += value.byteLength;
+    if (read > MEDIA_RANGE_MAX) {
+      const rest = new ReadableStream({
+        start(controller) { for (const c of chunks) controller.enqueue(c); },
+        async pull(controller) { const r = await reader.read(); if (r.done) controller.close(); else controller.enqueue(r.value); },
+        cancel(reason) { return reader.cancel(reason); },
+      });
+      return new Response(rest, { status: full.status, headers: full.headers });
+    }
+  }
+  const body = new Uint8Array(read);
+  let offset = 0;
+  for (const c of chunks) { body.set(c, offset); offset += c.byteLength; }
   const total = body.byteLength;
   const headers = new Headers(full.headers);
   headers.set('accept-ranges', 'bytes');

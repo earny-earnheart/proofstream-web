@@ -189,11 +189,20 @@ test('media answers byte-range requests so Safari can play the hero video', asyn
   secure(first);
 });
 
-test('large or unsized media streams through whole instead of being buffered', async () => {
-  for (const length of [String(9 * 1024 * 1024), null]) {
-    const env = envWith(() => new Response('x', { headers: { 'content-type': 'video/mp4', ...(length ? { 'content-length': length } : {}) } }));
+test('media over 8 MB streams through whole instead of being buffered, with or without a length', async () => {
+  const big = new Uint8Array(9 * 1024 * 1024);
+  for (const length of [String(big.byteLength), null]) {
+    const env = envWith(() => new Response(big, { headers: { 'content-type': 'video/mp4', ...(length ? { 'content-length': length } : {}) } }));
     const response = await worker.fetch(new Request(origin + '/media/big.mp4', { headers: { range: 'bytes=0-1' } }), env);
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('content-range'), null);
+    assert.equal((await response.arrayBuffer()).byteLength, big.byteLength, 'nothing lost when streaming through');
   }
+});
+
+test('small media without a length header still answers ranges', async () => {
+  const env = envWith(() => new Response(new Uint8Array(10), { headers: { 'content-type': 'video/webm' } }));
+  const response = await worker.fetch(new Request(origin + '/media/x.webm', { headers: { range: 'bytes=0-1' } }), env);
+  assert.equal(response.status, 206);
+  assert.equal(response.headers.get('content-range'), 'bytes 0-1/10');
 });
