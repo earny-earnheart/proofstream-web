@@ -2,26 +2,32 @@
 -- Each version stores the RFC 8785 canonical JSON that was hashed, so anyone can recompute
 -- payload_hash and compare it with the on-chain ProofStreamRegistry anchor. Audio never
 -- reaches the server: audio_hash is the SHA-256 the browser computed.
--- ISRCs are stored in canonical form (12 characters, no dashes) and are unique platform-wide.
+-- ISRCs are stored in canonical form (12 characters, no dashes). A claim is not ownership:
+-- several accounts may claim the same ISRC or audio, and every claim starts 'unverified'.
+-- Competing unverified claims become 'contested'; only an issuer-verified claim is
+-- 'verified' and only verified claims are anchored on-chain. An account claims an ISRC once.
 CREATE TABLE IF NOT EXISTS recordings (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL REFERENCES registrations(id) ON DELETE CASCADE,
-  isrc TEXT NOT NULL UNIQUE,
+  isrc TEXT NOT NULL,
   title TEXT NOT NULL,
   version_title TEXT NOT NULL,
   artist TEXT NOT NULL,
   duration_ms INTEGER NOT NULL,
   audio_hash TEXT NOT NULL,
   parent_isrc TEXT,
-  status TEXT NOT NULL DEFAULT 'active',
+  status TEXT NOT NULL DEFAULT 'unverified',
   current_version INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  UNIQUE (account_id, isrc)
 );
+CREATE INDEX IF NOT EXISTS recordings_isrc ON recordings(isrc);
 CREATE INDEX IF NOT EXISTS recordings_account ON recordings(account_id, created_at);
 CREATE INDEX IF NOT EXISTS recordings_audio ON recordings(audio_hash);
 
--- anchor_status: queued until the anchoring job records payload_hash on-chain, then anchored.
+-- anchor_status: queued until the claim is verified and the anchoring job records
+-- payload_hash on-chain, then anchored.
 CREATE TABLE IF NOT EXISTS recording_versions (
   recording_id TEXT NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
   version INTEGER NOT NULL,

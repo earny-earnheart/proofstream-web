@@ -8,6 +8,9 @@ const MAX_RECORDINGS = 10000;
 const MAX_VERSIONS = 1000;
 const MAX_RIGHTS = 32;          // matches ProofStreamRegistry.MAX_SPLITS
 const FULL_SHARE = 10000;
+// Statuses: unverified (default), contested (another account claims the same ISRC or audio),
+// verified (ownership confirmed by an issuer; only these are anchored), disputed, revoked.
+const EDITABLE = new Set(['unverified', 'verified']);
 const ROLES = new Set(['master_owner', 'publisher', 'writer', 'producer', 'featured_artist']);
 const REASONS = /^[a-z][a-z0-9_]{0,30}$/;  // fits the contract's bytes32 reason code
 const ISRC = /^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$/;
@@ -164,39 +167,47 @@ async function createRecording(request, env, account, json) {
   const rights = cleanRights(body.rights);
   if (typeof rights === 'string') return problem(json, 422, 'invalid-splits', 'Invalid rights', rights);
 
-  // Dedupe: one ISRC per recording, and one recording per audio file, platform-wide.
-  const sameIsrc = await env.DB.prepare('SELECT * FROM recordings WHERE isrc = ?').bind(isrc).first();
-  if (sameIsrc) {
+  // A claim is not ownership, so nobody gets an exclusive hold on an ISRC or an audio file
+  // by claiming it first. Within one account an ISRC and an audio file are claimed once.
+  const own = await env.DB.prepare('SELECT * FROM recordings WHERE account_id = ? AND isrc = ?').bind(account, isrc).first();
+  if (own) {
     // The same creator retrying the same recording gets the original back, not a duplicate.
-    if (sameIsrc.account_id === account && sameIsrc.audio_hash === audioHash) {
-      return json({ ...recordingView(sameIsrc, await versionsOf(env, sameIsrc.id)), idempotent_replay: true }, 200);
-    }
-    return problem(json, 409, 'duplicate-isrc', 'ISRC already recorded', `${displayIsrc(isrc)} is already recorded on ProofStream. If it is yours, open a dispute.`, { existing_isrc: displayIsrc(isrc) });
+    if (own.audio_hash === audioHash) return json({ ...recordingView(own, await versionsOf(env, own.id)), idempotent_replay: true }, 200);
+    return problem(json, 409, 'duplicate-isrc', 'ISRC already in your account', `You already recorded ${displayIsrc(isrc)} with different audio. Add a claim version to change it.`, { existing_isrc: displayIsrc(isrc) });
   }
-  const sameAudio = await env.DB.prepare('SELECT isrc FROM recordings WHERE audio_hash = ?').bind(audioHash).first();
-  if (sameAudio) {
-    return problem(json, 409, 'duplicate-recording', 'Duplicate recording', `This audio is already recorded as ${displayIsrc(sameAudio.isrc)}. A re-release keeps its ISRC; a remix or edit has different audio.`, { existing_isrc: displayIsrc(sameAudio.isrc) });
+  const ownAudio = await env.DB.prepare('SELECT isrc FROM recordings WHERE account_id = ? AND audio_hash = ?').bind(account, audioHash).first();
+  if (ownAudio) {
+    return problem(json, 409, 'duplicate-recording', 'Duplicate recording', `This audio is already in your account as ${displayIsrc(ownAudio.isrc)}. A re-release keeps its ISRC; a remix or edit has different audio.`, { existing_isrc: displayIsrc(ownAudio.isrc) });
   }
   const { n } = await env.DB.prepare('SELECT COUNT(*) AS n FROM recordings WHERE account_id = ?').bind(account).first();
   if (n >= MAX_RECORDINGS) return problem(json, 409, 'limit', 'Limit reached', 'You have reached the recording limit.');
 
+  // Another account claims this ISRC or this audio: the claim is still recorded, as
+  // contested, and so are any competing unverified claims. Verified claims keep their
+  // status. Nothing about the other claims is returned here.
+  const competing = await env.DB.prepare('SELECT COUNT(*) AS n FROM recordings WHERE account_id != ? AND (isrc = ? OR audio_hash = ?)')
+    .bind(account, isrc, audioHash).first();
+  const status = competing.n ? 'contested' : 'unverified';
+
   const now = new Date().toISOString();
   const rec = {
     id: 'rec_' + crypto.randomUUID(), account_id: account, isrc, title, version_title: versionTitle, artist,
-    duration_ms: body.duration_ms, audio_hash: audioHash, parent_isrc: parentIsrc, status: 'active',
+    duration_ms: body.duration_ms, audio_hash: audioHash, parent_isrc: parentIsrc, status,
     current_version: 0, created_at: now, updated_at: now,
   };
   const v = await versionRecord(rec, rights, 'initial', 0, now);
   try {
     await env.DB.batch([
       env.DB.prepare('INSERT INTO recordings (id, account_id, isrc, title, version_title, artist, duration_ms, audio_hash, parent_isrc, status, current_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        .bind(rec.id, account, isrc, title, versionTitle, artist, rec.duration_ms, audioHash, parentIsrc, 'active', 0, now, now),
+        .bind(rec.id, account, isrc, title, versionTitle, artist, rec.duration_ms, audioHash, parentIsrc, status, 0, now, now),
       env.DB.prepare('INSERT INTO recording_versions (recording_id, version, payload, payload_hash, claim, claim_hash, reason, created_at) VALUES (?, 0, ?, ?, ?, ?, ?, ?)')
         .bind(rec.id, v.payload, v.payload_hash, v.claim, v.claim_hash, 'initial', now),
+      env.DB.prepare("UPDATE recordings SET status = 'contested', updated_at = ? WHERE account_id != ? AND (isrc = ? OR audio_hash = ?) AND status = 'unverified'")
+        .bind(now, account, isrc, audioHash),
     ]);
   } catch {
-    // A concurrent request recorded this ISRC first.
-    return problem(json, 409, 'duplicate-isrc', 'ISRC already recorded', `${displayIsrc(isrc)} is already recorded on ProofStream.`, { existing_isrc: displayIsrc(isrc) });
+    // A concurrent request from this account recorded this ISRC first.
+    return problem(json, 409, 'duplicate-isrc', 'ISRC already in your account', `You already recorded ${displayIsrc(isrc)}.`, { existing_isrc: displayIsrc(isrc) });
   }
   return json({ ...recordingView(rec, await versionsOf(env, rec.id)), idempotent_replay: false }, 201);
 }
@@ -210,7 +221,7 @@ async function addClaim(request, env, account, id, json) {
     const replay = await env.DB.prepare('SELECT * FROM recording_versions WHERE recording_id = ? AND idempotency_key = ?').bind(id, key).first();
     if (replay) return json({ ...versionView(replay), idempotent_replay: true }, 200);
   }
-  if (rec.status !== 'active') return problem(json, 409, 'not-active', 'Recording not active', `Claims cannot change while the recording is ${rec.status}.`);
+  if (!EDITABLE.has(rec.status)) return problem(json, 409, 'not-editable', 'Claim locked', `Claims cannot change while the recording is ${rec.status}.`);
   const body = await readJson(request);
   if (!body) return problem(json, 400, 'invalid-request', 'Invalid request', 'Send the claim as a JSON object.');
   if (typeof body.reason !== 'string' || !REASONS.test(body.reason) || body.reason === 'initial') {
@@ -225,9 +236,9 @@ async function addClaim(request, env, account, id, json) {
   const v = await versionRecord(rec, rights, body.reason, version, now);
   // The UPDATE only succeeds if nobody else added a version first, so versions never collide.
   const [, updated] = await env.DB.batch([
-    env.DB.prepare("INSERT INTO recording_versions (recording_id, version, payload, payload_hash, claim, claim_hash, reason, idempotency_key, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM recordings WHERE id = ? AND current_version = ? AND status = 'active')")
+    env.DB.prepare("INSERT INTO recording_versions (recording_id, version, payload, payload_hash, claim, claim_hash, reason, idempotency_key, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM recordings WHERE id = ? AND current_version = ? AND status IN ('unverified', 'verified'))")
       .bind(id, version, v.payload, v.payload_hash, v.claim, v.claim_hash, body.reason, key, now, id, rec.current_version),
-    env.DB.prepare("UPDATE recordings SET current_version = ?, updated_at = ? WHERE id = ? AND current_version = ? AND status = 'active' RETURNING id")
+    env.DB.prepare("UPDATE recordings SET current_version = ?, updated_at = ? WHERE id = ? AND current_version = ? AND status IN ('unverified', 'verified') RETURNING id")
       .bind(version, now, id, rec.current_version),
   ]);
   if (!updated.results.length) return problem(json, 409, 'conflict', 'Conflict', 'The recording changed while you were saving. Reload and try again.');
@@ -235,31 +246,46 @@ async function addClaim(request, env, account, id, json) {
   return json({ ...versionView(saved), idempotent_replay: false }, 201);
 }
 
-// Public: anyone can check a recording's current claim and recompute its hash.
+// Public: anyone can see every claim on an ISRC and recompute each claim's hash. An ISRC is
+// valid only when exactly one live claim exists and an issuer has verified it.
 async function verify(env, rawIsrc, json) {
   const isrc = canonicalIsrc(rawIsrc);
   if (!isrc) return problem(json, 400, 'invalid-isrc', 'Invalid ISRC', 'Pass a 12-character ISRC such as US-SKG-26-12345.');
-  const rec = await env.DB.prepare('SELECT * FROM recordings WHERE isrc = ?').bind(isrc).first();
-  if (!rec) return json({ found: false, valid: false, isrc: displayIsrc(isrc) }, 404, { 'cache-control': 'public, max-age=60' });
-  const v = await env.DB.prepare('SELECT * FROM recording_versions WHERE recording_id = ? AND version = ?').bind(rec.id, rec.current_version).first();
+  const cache = { 'cache-control': 'public, max-age=60' };
+  const { results } = await env.DB.prepare(
+    'SELECT r.*, v.payload, v.payload_hash, v.claim_hash, v.created_at AS recorded_at, v.anchor_status, v.chain_id, v.contract_address, v.tx_hash, v.block_number, v.anchored_at FROM recordings r JOIN recording_versions v ON v.recording_id = r.id AND v.version = r.current_version WHERE r.isrc = ? ORDER BY r.created_at',
+  ).bind(isrc).all();
+  if (!results.length) return json({ found: false, valid: false, isrc: displayIsrc(isrc), claims: [] }, 404, cache);
+  const live = results.filter(r => r.status !== 'revoked');
+  const status = live.length === 0 ? 'revoked'
+    : live.some(r => r.status === 'disputed') ? 'disputed'
+    : live.length > 1 ? 'contested'
+    : live[0].status;
   return json({
     found: true,
-    valid: rec.status === 'active',
+    valid: status === 'verified',
     isrc: displayIsrc(isrc),
-    title: rec.title,
-    version: rec.version_title,
-    artist_display: rec.artist,
-    status: rec.status,
-    dispute_status: rec.status === 'disputed' ? 'open' : 'none',
-    record_version: rec.current_version,
-    registered_at: rec.created_at,
-    updated_at: rec.updated_at,
-    payload: v.payload,
-    payload_hash: v.payload_hash,
-    claim_hash: v.claim_hash,
-    hash_check: 'payload_hash = sha256(payload). Compare it with the on-chain anchor once anchor.status is anchored.',
-    anchor: versionView(v).anchor,
-  }, 200, { 'cache-control': 'public, max-age=60' });
+    status,
+    claim_count: results.length,
+    note: status === 'verified' ? 'One claim, verified by ProofStream.'
+      : status === 'contested' ? 'More than one account claims this ISRC or its audio. No claim is verified.'
+      : 'Claims are recorded as submitted and are not proof of ownership until verified.',
+    hash_check: 'For each claim, payload_hash = sha256(payload). Verified claims are anchored on-chain; compare payload_hash with the anchor.',
+    claims: results.map(r => ({
+      claim_ref: r.id,
+      status: r.status,
+      title: r.title,
+      version: r.version_title,
+      artist_display: r.artist,
+      record_version: r.current_version,
+      registered_at: r.created_at,
+      updated_at: r.updated_at,
+      payload: r.payload,
+      payload_hash: r.payload_hash,
+      claim_hash: r.claim_hash,
+      anchor: versionView({ ...r, created_at: r.recorded_at }).anchor,
+    })),
+  }, 200, cache);
 }
 
 export async function recordingsApi(request, env, url, { account, json, canonicalOrigin }) {

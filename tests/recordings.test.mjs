@@ -47,6 +47,7 @@ test('records a recording with a server timestamp and a recomputable hash', asyn
   assert.equal(body.versions.length, 1);
   assert(body.created_at >= before);
   assert.equal(body.versions[0].anchor.status, 'queued');
+  assert.equal(body.status, 'unverified', 'a claim is not ownership until verified');
 
   const stored = env.DB.db.prepare('SELECT payload, payload_hash, claim, claim_hash FROM recording_versions').get();
   assert.equal(stored.payload_hash, sha(stored.payload));
@@ -55,7 +56,7 @@ test('records a recording with a server timestamp and a recomputable hash', asyn
   assert.equal(JSON.parse(stored.payload).recorded_at, body.created_at);
 });
 
-test('public verify returns the current claim without sign-in, and the hash checks out', async () => {
+test('public verify lists the claim without sign-in, unverified, and the hash checks out', async () => {
   const env = await envWith();
   const cookie = await signUp(env, 'ada@example.com');
   await create(env, cookie);
@@ -65,10 +66,11 @@ test('public verify returns the current claim without sign-in, and the hash chec
     assert.equal(response.headers.get('cache-control'), 'public, max-age=60');
     const v = await response.json();
     assert.equal(v.found, true);
-    assert.equal(v.valid, true);
-    assert.equal(v.status, 'active');
-    assert.equal(v.payload_hash, sha(v.payload));
-    assert.equal(v.anchor.status, 'queued');
+    assert.equal(v.valid, false);
+    assert.equal(v.status, 'unverified');
+    assert.equal(v.claims.length, 1);
+    assert.equal(v.claims[0].payload_hash, sha(v.claims[0].payload));
+    assert.equal(v.claims[0].anchor.status, 'queued');
     assert(!JSON.stringify(v).includes('ada@example.com'), 'no account email in public output');
   }
   const missing = await worker.fetch(get('/api/v1/verify?isrc=USSKG2699999'), env);
@@ -77,7 +79,7 @@ test('public verify returns the current claim without sign-in, and the hash chec
   assert.equal((await worker.fetch(get('/api/v1/verify?isrc=nope'), env)).status, 400);
 });
 
-test('never records the same ISRC or the same audio twice', async () => {
+test('nobody can squat an ISRC or audio: a second account\'s claim makes both contested', async () => {
   const env = await envWith();
   const ada = await signUp(env, 'ada@example.com');
   const bo = await signUp(env, 'bo@example.com');
@@ -90,15 +92,55 @@ test('never records the same ISRC or the same audio twice', async () => {
   assert.equal(replay.idempotent_replay, true);
   assert.equal(replay.recording_id, first.recording_id);
 
-  const otherAccount = await create(env, bo);
-  assert.equal(otherAccount.status, 409);
-  assert.equal((await otherAccount.json()).type, 'https://proofstreamapp.com/errors/duplicate-isrc');
+  // Another account can still claim the same ISRC; both claims become contested.
+  const rival = await create(env, bo, recording({ audio_hash_sha256: audio('d') }));
+  assert.equal(rival.status, 201);
+  assert.equal((await rival.json()).status, 'contested');
+  const statuses = env.DB.db.prepare('SELECT status FROM recordings ORDER BY created_at').all().map(r => r.status);
+  assert.deepEqual(statuses, ['contested', 'contested']);
+  const v = await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json();
+  assert.equal(v.status, 'contested');
+  assert.equal(v.valid, false);
+  assert.equal(v.claim_count, 2);
+});
 
+test('the same audio under another ISRC is contested, and the other account\'s ISRC is not revealed', async () => {
+  const env = await envWith();
+  const ada = await signUp(env, 'ada@example.com');
+  const bo = await signUp(env, 'bo@example.com');
+  await create(env, ada);
   const sameAudio = await create(env, bo, recording({ isrc: 'GBAYE2600001' }));
+  assert.equal(sameAudio.status, 201);
+  const body = await sameAudio.json();
+  assert.equal(body.status, 'contested');
+  assert(!JSON.stringify(body).includes('SKG'), 'the other account\'s ISRC leaked');
+  assert.equal(env.DB.db.prepare("SELECT status FROM recordings WHERE isrc = 'USSKG2612345'").get().status, 'contested');
+});
+
+test('a verified claim keeps its status when someone else claims the same ISRC', async () => {
+  const env = await envWith();
+  const ada = await signUp(env, 'ada@example.com');
+  const bo = await signUp(env, 'bo@example.com');
+  await create(env, ada);
+  env.DB.db.prepare("UPDATE recordings SET status = 'verified'").run();
+  assert.equal((await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json()).valid, true);
+  await create(env, bo, recording({ audio_hash_sha256: audio('e') }));
+  const statuses = env.DB.db.prepare('SELECT status FROM recordings ORDER BY created_at').all().map(r => r.status);
+  assert.deepEqual(statuses, ['verified', 'contested']);
+  const v = await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json();
+  assert.equal(v.status, 'contested', 'a competing claim is visible to everyone');
+  assert.equal(v.valid, false);
+});
+
+test('one account cannot claim the same ISRC with other audio, or the same audio twice', async () => {
+  const env = await envWith();
+  const ada = await signUp(env, 'ada@example.com');
+  await create(env, ada);
+  const otherAudio = await create(env, ada, recording({ audio_hash_sha256: audio('f') }));
+  assert.equal(otherAudio.status, 409);
+  const sameAudio = await create(env, ada, recording({ isrc: 'GBAYE2600001' }));
   assert.equal(sameAudio.status, 409);
-  const dupe = await sameAudio.json();
-  assert.equal(dupe.type, 'https://proofstreamapp.com/errors/duplicate-recording');
-  assert.equal(dupe.existing_isrc, 'US-SKG-26-12345');
+  assert.equal((await sameAudio.json()).existing_isrc, 'US-SKG-26-12345', 'your own ISRC may be shown to you');
   assert.equal(env.DB.db.prepare('SELECT COUNT(*) AS n FROM recordings').get().n, 1);
 });
 
@@ -173,7 +215,7 @@ test('claim updates append versions; the original stays verifiable', async () =>
   assert.equal(v0.payload_hash, sha(v0.payload));
 
   const verified = await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json();
-  assert.equal(verified.record_version, 1);
+  assert.equal(verified.claims[0].record_version, 1);
 });
 
 test('claim updates are idempotent with an Idempotency-Key and need a reason', async () => {
@@ -207,7 +249,7 @@ test('claims freeze while a recording is not active, and other accounts cannot t
   assert.equal((await worker.fetch(post(ada, `/api/v1/recordings/${id}/claims`, body), env)).status, 409);
   const verified = await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json();
   assert.equal(verified.valid, false);
-  assert.equal(verified.dispute_status, 'open');
+  assert.equal(verified.status, 'disputed');
 });
 
 test('deleting an account deletes its recordings', async () => {
