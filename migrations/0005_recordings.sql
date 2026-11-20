@@ -4,8 +4,9 @@
 -- reaches the server: audio_hash is the SHA-256 the browser computed.
 -- ISRCs are stored in canonical form (12 characters, no dashes). A claim is not ownership:
 -- several accounts may claim the same ISRC or audio, and every claim starts 'unverified'.
--- Competing unverified claims become 'contested'; only an issuer-verified claim is
--- 'verified' and only verified claims are anchored on-chain. An account claims an ISRC once.
+-- 'verified' means an issuer confirmed the claim's current version; a new version resets it.
+-- Only verified claims are anchored on-chain. 'Contested' is derived when read, never stored.
+-- An account claims an ISRC once.
 CREATE TABLE IF NOT EXISTS recordings (
   id TEXT PRIMARY KEY,
   account_id TEXT NOT NULL REFERENCES registrations(id) ON DELETE CASCADE,
