@@ -276,6 +276,14 @@ test('claims freeze while a recording is not active, and other accounts cannot t
   assert.equal(verified.status, 'disputed');
 });
 
+test('the database only accepts known statuses', async () => {
+  const env = await envWith();
+  const cookie = await signUp(env, 'ada@example.com');
+  await create(env, cookie);
+  assert.throws(() => env.DB.db.prepare("UPDATE recordings SET status = 'contested'").run(), /CHECK constraint/);
+  assert.throws(() => env.DB.db.prepare("UPDATE recording_versions SET anchor_status = 'maybe'").run(), /CHECK constraint/);
+});
+
 test('deleting an account deletes its recordings', async () => {
   const env = await envWith();
   const cookie = await signUp(env, 'ada@example.com');
