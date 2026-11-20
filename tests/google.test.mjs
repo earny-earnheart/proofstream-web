@@ -44,7 +44,7 @@ test('starting Google sign-in redirects with PKCE and a signed, short-lived stat
 
   for (const missing of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']) {
     const off = await worker.fetch(get('/auth/google'), await withGoogle({ [missing]: undefined }));
-    assert.equal(off.headers.get('location'), '/?auth=unavailable');
+    assert.equal(off.headers.get('location'), '/register?auth=unavailable');
   }
   assert.equal((await (await worker.fetch(get('/api/session'), env)).json()).googleSignIn, true);
 });
@@ -93,7 +93,7 @@ test('forged, missing, reused or expired state is refused before calling Google'
   const missing = await googleSignIn(env, claims(), { cookie: '' });
   const tampered = await googleSignIn(env, claims(), { cookie: 'ps_oauth=a.b.1.signature' });
   for (const { callback, session } of [forged, missing, tampered]) {
-    assert.equal(callback.headers.get('location'), '/?auth=failed');
+    assert.equal(callback.headers.get('location'), '/register?auth=failed');
     assert.equal(session, undefined);
   }
   assert.equal(google.calls.length, 0);
@@ -116,7 +116,7 @@ test('unverified emails and tokens for another app, issuer or time are refused',
     claims({ sub: '' }), claims({ email: 'not-an-email' }),
   ]) {
     const { callback, session } = await googleSignIn(env, bad);
-    assert.equal(callback.headers.get('location'), '/?auth=failed', JSON.stringify(bad).slice(0, 80));
+    assert.equal(callback.headers.get('location'), '/register?auth=failed', JSON.stringify(bad).slice(0, 80));
     assert.equal(session, undefined);
   }
   google.status = 400;
@@ -131,7 +131,7 @@ test('a verified Google sign-in takes over an unverified password account and en
   const squatter = await signUp(env, 'ada@example.com', 'squatter-password');
   const { session } = await googleSignIn(env);
   assert.equal(session.split('=')[1].split('.')[0], squatter.split('=')[1].split('.')[0]);
-  assert.equal(await (await worker.fetch(get('/', squatter), env)).text(), 'asset:/register');
+  assert.equal(await (await worker.fetch(get('/', squatter), env)).text(), 'asset:/landing');
   assert.equal(await signIn(env, 'ada@example.com', 'squatter-password'), undefined);
   assert.equal(await (await worker.fetch(get('/', session), env)).text(), 'asset:/');
   assert.equal(accounts(env)[0].email_verified, 1);
@@ -148,7 +148,7 @@ test('emails that belong to a Google account cannot get a password by signing up
 
 test('closed registration refuses new Google accounts but lets existing ones in', async () => {
   const env = await withGoogle({ REGISTRATION_OPEN: 'false' });
-  assert.equal((await googleSignIn(env)).callback.headers.get('location'), '/?auth=closed');
+  assert.equal((await googleSignIn(env)).callback.headers.get('location'), '/register?auth=closed');
   env.DB.db.prepare("INSERT INTO registrations (id, email, name, created_at) VALUES ('legacy', 'ada@example.com', 'Ada', '2026-10-30')").run();
   const { session } = await googleSignIn(env);
   assert.equal(session.split('=')[1].split('.')[0], 'legacy');
@@ -156,7 +156,7 @@ test('closed registration refuses new Google accounts but lets existing ones in'
 
 test('Google sign-in is unavailable without configuration', async () => {
   const env = await envWith();
-  assert.equal((await worker.fetch(get('/auth/google/callback?code=x&state=y'), env)).headers.get('location'), '/?auth=unavailable');
+  assert.equal((await worker.fetch(get('/auth/google/callback?code=x&state=y'), env)).headers.get('location'), '/register?auth=unavailable');
   assert.equal((await (await worker.fetch(get('/api/session'), env)).json()).googleSignIn, false);
   assert.equal(origin, 'https://proofstreamapp.com');
 });
@@ -174,7 +174,7 @@ test('Google emails it cannot vouch for open new accounts but never take over ex
   const owner = await signUp(other, 'ada@example.com');
   for (const bad of [personal, claims({ hd: 'other.example' })]) {
     const { callback, session } = await googleSignIn(other, bad);
-    assert.equal(callback.headers.get('location'), '/?auth=exists');
+    assert.equal(callback.headers.get('location'), '/register?auth=exists');
     assert.equal(session, undefined);
   }
   assert.equal(await (await worker.fetch(get('/', owner), other)).text(), 'asset:/');
@@ -186,14 +186,14 @@ test('Google emails it cannot vouch for open new accounts but never take over ex
   const squatter = await signUp(gmail, 'ada@gmail.com', 'squatter-password');
   const { session } = await googleSignIn(gmail, claims({ hd: undefined, email: 'ada@gmail.com' }));
   assert.notEqual(session, undefined);
-  assert.equal(await (await worker.fetch(get('/', squatter), gmail)).text(), 'asset:/register');
+  assert.equal(await (await worker.fetch(get('/', squatter), gmail)).text(), 'asset:/landing');
 });
 
 test('an account linked to one Google account cannot be joined by another', async () => {
   const env = await withGoogle();
   const first = await googleSignIn(env);
   const second = await googleSignIn(env, claims({ sub: 'google-someone-else' }));
-  assert.equal(second.callback.headers.get('location'), '/?auth=exists');
+  assert.equal(second.callback.headers.get('location'), '/register?auth=exists');
   assert.equal(second.session, undefined);
   assert.equal(env.DB.db.prepare('SELECT COUNT(*) AS n FROM identities').get().n, 1);
   assert.equal(await (await worker.fetch(get('/', first.session), env)).text(), 'asset:/');
@@ -206,10 +206,10 @@ test('a vouched Google sign-in replaces an unvouched Google account that got the
   const owner = await googleSignIn(env, claims({ sub: 'google-owner' }));
   assert.equal(owner.callback.headers.get('location'), '/');
   assert.equal(owner.session.split('=')[1].split('.')[0], early.session.split('=')[1].split('.')[0]);
-  assert.equal(await (await worker.fetch(get('/', early.session), env)).text(), 'asset:/register');
+  assert.equal(await (await worker.fetch(get('/', early.session), env)).text(), 'asset:/landing');
   assert.deepEqual(env.DB.db.prepare('SELECT subject FROM identities').all().map(r => r.subject), ['google-owner']);
   // The unvouched account can no longer get in.
-  assert.equal((await googleSignIn(env, claims({ sub: 'google-stale', hd: undefined }))).callback.headers.get('location'), '/?auth=exists');
+  assert.equal((await googleSignIn(env, claims({ sub: 'google-stale', hd: undefined }))).callback.headers.get('location'), '/register?auth=exists');
 });
 
 test('a takeover landing between sign-in and the new cookie leaves that cookie useless', async () => {
@@ -222,7 +222,7 @@ test('a takeover landing between sign-in and the new cookie leaves that cookie u
   });
   const stale = await googleSignIn(env, claims({ sub: 'google-stale', hd: undefined }));
   assert.notEqual(stale.session, undefined);
-  assert.equal(await (await worker.fetch(get('/', stale.session), env)).text(), 'asset:/register');
+  assert.equal(await (await worker.fetch(get('/', stale.session), env)).text(), 'asset:/landing');
 
   // A password holder is signing in when the owner takes over.
   const other = await withGoogle();
@@ -232,7 +232,7 @@ test('a takeover landing between sign-in and the new cookie leaves that cookie u
   });
   const late = await signIn(other, 'ada@example.com', 'squatter-password');
   assert.notEqual(late, undefined);
-  assert.equal(await (await worker.fetch(get('/', late), other)).text(), 'asset:/register');
+  assert.equal(await (await worker.fetch(get('/', late), other)).text(), 'asset:/landing');
 });
 
 test('a takeover that lost a race changes nothing', async () => {
@@ -244,7 +244,7 @@ test('a takeover that lost a race changes nothing', async () => {
     env.DB.db.prepare("INSERT INTO identities SELECT 'google', 'google-winner', id, email, '2026-11-03' FROM registrations").run();
   });
   const { callback, session } = await googleSignIn(env);
-  assert.equal(callback.headers.get('location'), '/?auth=exists');
+  assert.equal(callback.headers.get('location'), '/register?auth=exists');
   assert.equal(session, undefined);
   assert.deepEqual(env.DB.db.prepare('SELECT subject FROM identities').all().map(r => r.subject), ['google-winner']);
 });

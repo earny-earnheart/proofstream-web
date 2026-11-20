@@ -10,6 +10,8 @@ const CANONICAL_ORIGIN = 'https://' + CANONICAL_HOST;
 const COOKIE_NAME = 'ps_session';
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 const GATED_PATHS = new Set(['/', '/index.html', '/app.js']);
+// Signed-out visitors to the homepage get the public landing page; sign-up lives at /register.
+const LANDING_PAGE = '/landing';
 const REGISTER_PAGE = '/register';
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -403,10 +405,10 @@ function redirect(location, cookies = []) {
 }
 
 const oauthCookie = (value, maxAge) => `${OAUTH_COOKIE}=${value}; Max-Age=${maxAge}; Path=/auth/google; HttpOnly; Secure; SameSite=Lax`;
-const authFailed = reason => redirect('/?auth=' + reason, [oauthCookie('', 0)]);
+const authFailed = reason => redirect(REGISTER_PAGE + '?auth=' + reason, [oauthCookie('', 0)]);
 
 async function googleStart(env) {
-  if (!googleEnabled(env)) return redirect('/?auth=unavailable');
+  if (!googleEnabled(env)) return redirect(REGISTER_PAGE + '?auth=unavailable');
   const random = () => base64url(crypto.getRandomValues(new Uint8Array(32)));
   const state = random();
   const verifier = random();
@@ -772,7 +774,7 @@ export default {
     } else if (url.pathname !== '/' && url.pathname.endsWith('/')) {
       url.pathname = url.pathname.replace(/\/+$/, '') || '/';
       response = new Response(null, { status: 301, headers: { location: url.href } });
-    // 5. The workspace needs a registration; unregistered visitors get the sign-up page.
+    // 5. The workspace needs a registration; unregistered visitors get the public landing page.
     } else if (GATED_PATHS.has(url.pathname)) {
       if (await isRegistered(request, env)) {
         response = privateResponse(await serveAsset(request, env));
@@ -782,7 +784,7 @@ export default {
           headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
         });
       } else {
-        response = privateResponse(await serveAsset(request, env, REGISTER_PAGE));
+        response = privateResponse(await serveAsset(request, env, LANDING_PAGE));
       }
     } else if (url.pathname.startsWith('/media/')) {
       response = await mediaAsset(request, env);
