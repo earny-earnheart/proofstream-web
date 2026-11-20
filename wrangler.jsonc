@@ -13,7 +13,13 @@
     "not_found_handling": "404-page"
   },
   "send_email": [{ "name": "EMAIL" }],
-  "vars": { "REGISTRATION_OPEN": "true" },
+  "vars": {
+    "REGISTRATION_OPEN": "true",
+    "REGISTRY_ADDRESS": "0xD49e374c9e267823C00a262eAf19fCfb2CaDc17D",
+    "CHAIN_ID": "11155111",
+    "CHAIN_RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com"
+  },
+  "triggers": { "crons": ["*/10 * * * *"] },
   "d1_databases": [
     {
       "binding": "DB",

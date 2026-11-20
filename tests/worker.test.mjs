@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import worker from '../src/worker.js';
+import { execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 
 const origin = 'https://proofstreamapp.com';
 const request = (path = '/', method = 'GET', host = origin) => new Request(host + path, { method });
@@ -145,4 +147,19 @@ test('deployment configuration preserves the existing worker, account and only t
     { pattern: 'proofstreamapp.com', custom_domain: true },
     { pattern: 'www.proofstreamapp.com', custom_domain: true },
   ]);
+});
+
+test('anchoring is configured with a cron, the registry and no private key in the config', async () => {
+  const raw = await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8');
+  const config = JSON.parse(raw);
+  assert.deepEqual(config.triggers.crons, ['*/10 * * * *']);
+  assert.match(config.vars.REGISTRY_ADDRESS, /^0x[0-9a-fA-F]{40}$/);
+  assert.match(config.vars.CHAIN_RPC_URL, /^https:\/\//);
+  assert(!/ANCHOR_PRIVATE_KEY|ADMIN_EMAILS/.test(raw), 'secrets belong in wrangler secret, not the config');
+});
+
+test('every browser script parses', () => {
+  for (const file of readdirSync(new URL('../public/', import.meta.url)).filter(f => f.endsWith('.js'))) {
+    execFileSync(process.execPath, ['--check', new URL('../public/' + file, import.meta.url).pathname]);
+  }
 });
