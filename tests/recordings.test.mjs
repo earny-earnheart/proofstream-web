@@ -46,7 +46,7 @@ test('records a recording with a server timestamp and a recomputable hash', asyn
   assert.equal(body.isrc, 'US-SKG-26-12345');
   assert.equal(body.versions.length, 1);
   assert(body.created_at >= before);
-  assert.equal(body.versions[0].anchor.status, 'queued');
+  assert.equal(body.versions[0].anchor.status, 'pending');
   assert.equal(body.status, 'unverified', 'a claim is not ownership until verified');
 
   const stored = env.DB.db.prepare('SELECT payload, payload_hash, claim, claim_hash FROM recording_versions').get();
@@ -70,7 +70,7 @@ test('public verify lists the claim without sign-in, unverified, and the hash ch
     assert.equal(v.status, 'unverified');
     assert.equal(v.claims.length, 1);
     assert.equal(v.claims[0].payload_hash, sha(v.claims[0].payload));
-    assert.equal(v.claims[0].anchor.status, 'queued');
+    assert.equal(v.claims[0].anchor.status, 'pending');
     assert(!JSON.stringify(v).includes('ada@example.com'), 'no account email in public output');
   }
   const missing = await worker.fetch(get('/api/v1/verify?isrc=USSKG2699999'), env);

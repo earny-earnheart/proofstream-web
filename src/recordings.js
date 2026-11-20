@@ -1,9 +1,14 @@
 // Recordings API (v1): ISRC-keyed rights claims with an append-only version history.
 // Each version is hashed from RFC 8785 canonical JSON, stored with the exact text that was
-// hashed, and queued for anchoring in the ProofStreamRegistry contract. Timestamps are the
+// hashed, and anchored in the ProofStreamRegistry contract once an admin verifies it. Times are the
 // server's, never the browser's. ISRCs are brought by the creator: ProofStream does not
 // issue them (SoundExchange / IFPI-authorized channels do).
 
+// The chain code (viem) loads only when anchoring runs, not on every request.
+export async function runAnchor(env) {
+  const [{ runAnchoring }, { chainFromEnv }] = await Promise.all([import('./anchor.js'), import('./chain.js')]);
+  return runAnchoring(env, chainFromEnv(env));
+}
 const MAX_RECORDINGS = 10000;
 const MAX_VERSIONS = 1000;
 const MAX_RIGHTS = 32;          // matches ProofStreamRegistry.MAX_SPLITS
@@ -19,7 +24,9 @@ const ISRC = /^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$/;
 const TERRITORY = /^(WW|[A-Z]{2})$/;
 const IPI = /^[0-9]{9,11}$/;
 const HASH = /^[a-f0-9]{64}$/;
-const RECORDING_PATH = /^\/api\/v1\/recordings\/(rec_[a-f0-9-]{36})(\/claims)?$/;
+const RECORDING_PATH = /^\/api\/v1\/recordings\/(rec_[a-f0-9-]{36})(\/claims|\/verification-request)?$/;
+const ADMIN_PATH = /^\/api\/v1\/admin\/recordings\/(rec_[a-f0-9-]{36})\/(verify|reject|revoke)$/;
+const MAX_EVIDENCE = 10;
 const VERIFY_PATH = /^\/api\/v1\/verify\/([A-Za-z0-9-]{12,15})$/;
 const ERRORS = 'https://proofstreamapp.com/errors/';
 
@@ -138,6 +145,13 @@ function recordingView(r, versions) {
     status: r.status,
     rights: current ? JSON.parse(current.claim).rights : [],
     current_version: r.current_version,
+    verification: {
+      requested_at: r.verification_requested_at ?? null,
+      evidence_count: r.verification_evidence ? JSON.parse(r.verification_evidence).length : 0,
+      verified_version: r.status === 'verified' ? r.verified_version : null,
+      verified_at: r.status === 'verified' ? r.verified_at : null,
+      note: r.status_reason ?? null,
+    },
     versions: versions.map(versionView),
     created_at: r.created_at,
     updated_at: r.updated_at,
@@ -241,9 +255,12 @@ async function addClaim(request, env, account, id, json) {
   const [, updated] = await env.DB.batch([
     env.DB.prepare("INSERT INTO recording_versions (recording_id, version, payload, payload_hash, claim, claim_hash, reason, idempotency_key, created_at) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM recordings WHERE id = ? AND current_version = ? AND status IN ('unverified', 'verified'))")
       .bind(id, version, v.payload, v.payload_hash, v.claim, v.claim_hash, body.reason, key, now, id, rec.current_version),
-    // Verification covers one version: a new version goes back to unverified until re-checked.
-    env.DB.prepare("UPDATE recordings SET current_version = ?, updated_at = ?, status = 'unverified' WHERE id = ? AND current_version = ? AND status IN ('unverified', 'verified') RETURNING id")
+    // Verification covers one version: a new version goes back to unverified until re-checked,
+    // any pending request is cleared, and an earlier version waiting to be anchored stops.
+    env.DB.prepare("UPDATE recordings SET current_version = ?, updated_at = ?, status = 'unverified', verification_requested_at = NULL WHERE id = ? AND current_version = ? AND status IN ('unverified', 'verified') RETURNING id")
       .bind(version, now, id, rec.current_version),
+    env.DB.prepare("UPDATE recording_versions SET anchor_status = 'pending' WHERE recording_id = ? AND anchor_status = 'queued' AND EXISTS (SELECT 1 FROM recordings WHERE id = ? AND current_version = ?)")
+      .bind(id, id, version),
   ]);
   if (!updated.results.length) return problem(json, 409, 'conflict', 'Conflict', 'The recording changed while you were saving. Reload and try again.');
   const saved = await env.DB.prepare('SELECT * FROM recording_versions WHERE recording_id = ? AND version = ?').bind(id, version).first();
@@ -297,6 +314,83 @@ async function verify(env, rawIsrc, json) {
   }, 200, cache);
 }
 
+// ---- Verification ----
+
+// Admins are the addresses in the ADMIN_EMAILS secret, and only once the email is verified.
+export async function isAdmin(env, account) {
+  const allowed = new Set(String(env.ADMIN_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean));
+  if (!allowed.size || !account) return false;
+  const row = await env.DB.prepare('SELECT email, email_verified FROM registrations WHERE id = ?').bind(account).first();
+  return Boolean(row && row.email_verified === 1 && allowed.has(row.email));
+}
+
+// The creator asks ProofStream to verify the current version, with SHA-256 hashes of the
+// evidence (split sheet, distributor statement, registrant letter). Documents themselves
+// are shared out of band; only their hashes are recorded here.
+async function requestVerification(request, env, account, id, json) {
+  const rec = await env.DB.prepare('SELECT * FROM recordings WHERE id = ? AND account_id = ?').bind(id, account).first();
+  if (!rec) return problem(json, 404, 'not-found', 'Not found', 'No such recording in your account.');
+  if (rec.status !== 'unverified') return problem(json, 409, 'not-unverified', 'Cannot request verification', `This recording is ${rec.status}.`);
+  const body = await readJson(request);
+  const evidence = Array.isArray(body?.evidence_hashes) ? body.evidence_hashes.map(h => typeof h === 'string' ? h.toLowerCase().replace(/^(sha256:|0x)/, '') : '') : null;
+  if (!evidence || evidence.length < 1 || evidence.length > MAX_EVIDENCE || !evidence.every(h => HASH.test(h))) {
+    return problem(json, 422, 'invalid-evidence', 'Evidence required', `evidence_hashes must list 1 to ${MAX_EVIDENCE} SHA-256 hashes of your evidence documents.`);
+  }
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE recordings SET verification_requested_at = ?, verification_evidence = ?, status_reason = NULL, updated_at = ? WHERE id = ? AND status = 'unverified'")
+    .bind(now, JSON.stringify([...new Set(evidence)]), now, id).run();
+  return json({ ok: true, requested_at: now, version: rec.current_version }, 202);
+}
+
+async function verificationQueue(env, json) {
+  const { results } = await env.DB.prepare(
+    "SELECT r.*, g.email, (SELECT COUNT(*) FROM recordings o WHERE o.id != r.id AND (o.isrc = r.isrc OR o.audio_hash = r.audio_hash) AND o.status != 'revoked') AS competing FROM recordings r JOIN registrations g ON g.id = r.account_id WHERE r.status = 'unverified' AND r.verification_requested_at IS NOT NULL ORDER BY r.verification_requested_at",
+  ).bind().all();
+  return json({ queue: await Promise.all(results.map(async r => ({
+    ...recordingView(r, await versionsOf(env, r.id)),
+    account_email: r.email,
+    evidence_hashes: JSON.parse(r.verification_evidence || '[]'),
+    competing_claims: r.competing,
+  }))) });
+}
+
+// verify: confirms one version; it fails if that version is no longer current or if another
+// claim on the ISRC is already verified (revoke that one first). The version is queued for
+// anchoring. reject: declines the request, the claim stays unverified. revoke: final.
+async function decide(request, env, admin, id, action, json) {
+  const body = (await readJson(request)) || {};
+  const rec = await env.DB.prepare('SELECT * FROM recordings WHERE id = ?').bind(id).first();
+  if (!rec) return problem(json, 404, 'not-found', 'Not found', 'No such recording.');
+  const now = new Date().toISOString();
+  if (action === 'verify') {
+    if (body.version !== rec.current_version) return problem(json, 409, 'stale-version', 'Version changed', `The current version is ${rec.current_version}. Review it, then verify that version.`);
+    if (rec.status !== 'unverified') return problem(json, 409, 'not-unverified', 'Cannot verify', `This recording is ${rec.status}.`);
+    const other = await env.DB.prepare("SELECT 1 FROM recordings WHERE isrc = ? AND id != ? AND status = 'verified'").bind(rec.isrc, id).first();
+    if (other) return problem(json, 409, 'already-verified', 'Another claim is verified', 'Another claim on this ISRC is verified. Revoke it first.');
+    const [updated] = await env.DB.batch([
+      env.DB.prepare("UPDATE recordings SET status = 'verified', verified_version = ?, verified_at = ?, verified_by = ?, verification_requested_at = NULL, status_reason = NULL, updated_at = ? WHERE id = ? AND status = 'unverified' AND current_version = ? AND NOT EXISTS (SELECT 1 FROM recordings o WHERE o.isrc = ? AND o.id != ? AND o.status = 'verified') RETURNING id")
+        .bind(rec.current_version, now, admin, now, id, rec.current_version, rec.isrc, id),
+      env.DB.prepare("UPDATE recording_versions SET anchor_status = 'queued', anchor_error = NULL WHERE recording_id = ? AND version = ? AND anchor_status IN ('pending', 'failed') AND EXISTS (SELECT 1 FROM recordings WHERE id = ? AND status = 'verified' AND verified_version = ?)")
+        .bind(id, rec.current_version, id, rec.current_version),
+    ]);
+    if (!updated.results.length) return problem(json, 409, 'conflict', 'Conflict', 'The recording changed. Reload and try again.');
+    return json({ ok: true, status: 'verified', version: rec.current_version });
+  }
+  const reason = text(body.reason, 300);
+  if (!reason) return problem(json, 422, 'invalid-request', 'Reason required', 'Give a reason (up to 300 characters); the creator sees it.');
+  if (action === 'reject') {
+    if (rec.status !== 'unverified') return problem(json, 409, 'not-unverified', 'Nothing to reject', `This recording is ${rec.status}.`);
+    await env.DB.prepare("UPDATE recordings SET verification_requested_at = NULL, status_reason = ?, updated_at = ? WHERE id = ?").bind(reason, now, id).run();
+    return json({ ok: true, status: 'unverified' });
+  }
+  if (rec.status === 'revoked') return problem(json, 409, 'already-revoked', 'Already revoked', 'This claim is already revoked.');
+  await env.DB.batch([
+    env.DB.prepare("UPDATE recordings SET status = 'revoked', status_reason = ?, verification_requested_at = NULL, updated_at = ? WHERE id = ?").bind(reason, now, id),
+    env.DB.prepare("UPDATE recording_versions SET anchor_status = 'pending' WHERE recording_id = ? AND anchor_status = 'queued'").bind(id),
+  ]);
+  return json({ ok: true, status: 'revoked' });
+}
+
 export async function recordingsApi(request, env, url, { account, json, canonicalOrigin }) {
   const { pathname } = url;
   const method = request.method;
@@ -322,6 +416,16 @@ export async function recordingsApi(request, env, url, { account, json, canonica
     if (!rec) return problem(json, 404, 'not-found', 'Not found', 'No such recording in your account.');
     return json({ ...recordingView(rec, await versionsOf(env, rec.id)), contested: await isContested(env, rec) });
   }
-  if (match && match[2] && method === 'POST') return addClaim(request, env, id, match[1], json);
+  if (match && match[2] === '/claims' && method === 'POST') return addClaim(request, env, id, match[1], json);
+  if (match && match[2] === '/verification-request' && method === 'POST') return requestVerification(request, env, id, match[1], json);
+
+  if (pathname.startsWith('/api/v1/admin/')) {
+    const admin = await isAdmin(env, id);
+    if (!admin) return problem(json, 404, 'not-found', 'Not found', 'No such endpoint.');
+    if (pathname === '/api/v1/admin/verification-queue' && (method === 'GET' || method === 'HEAD')) return verificationQueue(env, json);
+    if (pathname === '/api/v1/admin/anchor-now' && method === 'POST') return json(await runAnchor(env), 200);
+    const adminMatch = pathname.match(ADMIN_PATH);
+    if (adminMatch && method === 'POST') return decide(request, env, id, adminMatch[1], adminMatch[2], json);
+  }
   return problem(json, 404, 'not-found', 'Not found', 'No such endpoint.');
 }

@@ -1,4 +1,4 @@
-import { recordingsApi } from './recordings.js';
+import { recordingsApi, isAdmin, runAnchor } from './recordings.js';
 
 // ProofStream's thin Cloudflare Workers Static Assets front controller.
 // The only routes configured for production are the apex and www custom domains.
@@ -698,6 +698,11 @@ export default {
       response = await googleStart(env);
     } else if (url.pathname === '/auth/google/callback') {
       response = await googleCallback(request, env, url);
+    // The verification queue page exists only for admins; everyone else gets a plain 404.
+    } else if (url.pathname === '/admin' || url.pathname === '/admin.html' || url.pathname === '/admin.js') {
+      response = (await isAdmin(env, await accountId(request, env)))
+        ? privateResponse(await serveAsset(request, env))
+        : new Response('Not found\n', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
     // 4. Hash-based in-page navigation does not depend on trailing HTTP slashes.
     } else if (url.pathname !== '/' && url.pathname.endsWith('/')) {
       url.pathname = url.pathname.replace(/\/+$/, '') || '/';
@@ -721,5 +726,13 @@ export default {
 
     // 7. Security headers and non-canonical noindex apply to every response.
     return secureResponse(response, request);
+  },
+
+  // Cron trigger: anchor verified claims on-chain.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runAnchor(env).then(
+      result => console.log('anchoring', JSON.stringify(result)),
+      error => console.error('anchoring failed', error?.message),
+    ));
   },
 };
