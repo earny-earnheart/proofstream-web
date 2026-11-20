@@ -643,6 +643,63 @@ function isAdminPath(pathname) {
   return /^\/+admin(\.html|\.js)?$/i.test(decoded);
 }
 
+// Hero video and other media: browsers seek with byte ranges, and Safari will not play a
+// <video> whose server ignores them, so answer Range with 206 Partial Content.
+const MEDIA_RANGE_MAX = 8 * 1024 * 1024;
+
+async function mediaAsset(request, env) {
+  const full = await serveAsset(new Request(request.url), env);
+  if (!full.ok) return full;
+  // Only small media is held in memory to slice. The asset store may not send a length, so
+  // read in chunks: past the cap, stream what was read plus the rest through whole.
+  if (Number(full.headers.get('content-length')) > MEDIA_RANGE_MAX || !full.body) return full;
+  const reader = full.body.getReader();
+  const chunks = [];
+  let read = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    read += value.byteLength;
+    if (read > MEDIA_RANGE_MAX) {
+      const rest = new ReadableStream({
+        start(controller) { for (const c of chunks) controller.enqueue(c); },
+        async pull(controller) { const r = await reader.read(); if (r.done) controller.close(); else controller.enqueue(r.value); },
+        cancel(reason) { return reader.cancel(reason); },
+      });
+      return new Response(rest, { status: full.status, headers: full.headers });
+    }
+  }
+  const body = new Uint8Array(read);
+  let offset = 0;
+  for (const c of chunks) { body.set(c, offset); offset += c.byteLength; }
+  const total = body.byteLength;
+  const headers = new Headers(full.headers);
+  headers.set('accept-ranges', 'bytes');
+  headers.set('cache-control', 'public, max-age=86400');
+  const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('range') || '');
+  if (!range || (range[1] === '' && range[2] === '')) {
+    headers.set('content-length', String(total));
+    return new Response(body, { status: 200, headers });
+  }
+  let start, end;
+  if (range[1] === '') {
+    start = Math.max(0, total - Number(range[2]));
+    end = total - 1;
+  } else {
+    start = Number(range[1]);
+    end = range[2] === '' ? total - 1 : Math.min(Number(range[2]), total - 1);
+  }
+  if (start > end || start >= total) {
+    headers.set('content-range', `bytes */${total}`);
+    headers.delete('content-length');
+    return new Response(null, { status: 416, headers });
+  }
+  headers.set('content-range', `bytes ${start}-${end}/${total}`);
+  headers.set('content-length', String(end - start + 1));
+  return new Response(body.slice(start, end + 1), { status: 206, headers });
+}
+
 // Gated responses differ per visitor, so shared caches must not reuse them.
 function privateResponse(response) {
   const headers = new Headers(response.headers);
@@ -727,6 +784,8 @@ export default {
       } else {
         response = privateResponse(await serveAsset(request, env, REGISTER_PAGE));
       }
+    } else if (url.pathname.startsWith('/media/')) {
+      response = await mediaAsset(request, env);
     // 6. Cloudflare serves the files, including a real 404 for unknown paths.
     } else {
       response = await serveAsset(request, env);
