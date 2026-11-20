@@ -10,12 +10,12 @@ test('unregistered visitors get the sign-in page at / and 403 for app.js', async
   const env = await envWith();
   const home = await worker.fetch(get('/'), env);
   assert.equal(home.status, 200);
-  assert.equal(await home.text(), 'asset:/register');
+  assert.equal(await home.text(), 'asset:/landing');
   assert.equal(home.headers.get('cache-control'), 'private, no-cache');
   assert.equal(home.headers.get('vary'), 'cookie');
   const script = await worker.fetch(get('/app.js'), env);
   assert.equal(script.status, 403);
-  assert.deepEqual(env.calls, ['/register']);
+  assert.deepEqual(env.calls, ['/landing']);
   // Public assets stay reachable so the sign-in page can render.
   assert.equal(await (await worker.fetch(get('/styles.css'), env)).text(), 'asset:/styles.css');
 });
@@ -150,11 +150,11 @@ test('cookies from the old email-only sign-up, tampered cookies and foreign secr
   const cookie = await signUp(env, 'ada@example.com');
   const [name, value] = cookie.split('=');
   const tampered = `${name}=${value.replace(/^./, c => (c === 'a' ? 'b' : 'a'))}`;
-  assert.equal(await (await worker.fetch(get('/', tampered), env)).text(), 'asset:/register');
-  assert.equal(await (await worker.fetch(get('/', 'ps_session=garbage'), env)).text(), 'asset:/register');
-  assert.equal(await (await worker.fetch(get('/', 'ps_reg=' + value), env)).text(), 'asset:/register');
-  assert.equal(await (await worker.fetch(get('/', cookie), await envWith({ SESSION_SECRET: 'other' }))).text(), 'asset:/register');
-  assert.equal(await (await worker.fetch(get('/', cookie), { ...env, SESSION_SECRET: undefined })).text(), 'asset:/register');
+  assert.equal(await (await worker.fetch(get('/', tampered), env)).text(), 'asset:/landing');
+  assert.equal(await (await worker.fetch(get('/', 'ps_session=garbage'), env)).text(), 'asset:/landing');
+  assert.equal(await (await worker.fetch(get('/', 'ps_reg=' + value), env)).text(), 'asset:/landing');
+  assert.equal(await (await worker.fetch(get('/', cookie), await envWith({ SESSION_SECRET: 'other' }))).text(), 'asset:/landing');
+  assert.equal(await (await worker.fetch(get('/', cookie), { ...env, SESSION_SECRET: undefined })).text(), 'asset:/landing');
 });
 
 test('deleting a registration or bumping its session version revokes cookies; bad issue times are refused', async () => {
@@ -162,7 +162,7 @@ test('deleting a registration or bumping its session version revokes cookies; ba
   const cookie = await signUp(env, 'ada@example.com');
   assert.equal(await (await worker.fetch(get('/', cookie), env)).text(), 'asset:/');
   env.DB.db.prepare("UPDATE registrations SET session_version = session_version + 1 WHERE email = 'ada@example.com'").run();
-  assert.equal(await (await worker.fetch(get('/', cookie), env)).text(), 'asset:/register');
+  assert.equal(await (await worker.fetch(get('/', cookie), env)).text(), 'asset:/landing');
   const next = await signIn(env, 'ada@example.com');
   assert.equal(await (await worker.fetch(get('/', next), env)).text(), 'asset:/');
   env.DB.db.prepare("DELETE FROM registrations WHERE email = 'ada@example.com'").run();
@@ -178,10 +178,10 @@ test('deleting a registration or bumping its session version revokes cookies; ba
   };
   const now = Math.floor(Date.now() / 1000);
   assert.equal(await (await worker.fetch(get('/', await sign(`${id}.${version}.${now - 60}`)), env)).text(), 'asset:/');
-  assert.equal(await (await worker.fetch(get('/', await sign(`${id}.${version}.${now - 366 * 86400}`)), env)).text(), 'asset:/register');
-  assert.equal(await (await worker.fetch(get('/', await sign(`${id}.${version}.${now + 3600}`)), env)).text(), 'asset:/register');
-  assert.equal(await (await worker.fetch(get('/', await sign(`${id}.${version + 1}.${now}`)), env)).text(), 'asset:/register');
-  assert.equal(await (await worker.fetch(get('/', await sign(`${id}.${now}`)), env)).text(), 'asset:/register');
+  assert.equal(await (await worker.fetch(get('/', await sign(`${id}.${version}.${now - 366 * 86400}`)), env)).text(), 'asset:/landing');
+  assert.equal(await (await worker.fetch(get('/', await sign(`${id}.${version}.${now + 3600}`)), env)).text(), 'asset:/landing');
+  assert.equal(await (await worker.fetch(get('/', await sign(`${id}.${version + 1}.${now}`)), env)).text(), 'asset:/landing');
+  assert.equal(await (await worker.fetch(get('/', await sign(`${id}.${now}`)), env)).text(), 'asset:/landing');
 });
 
 test('other write methods and paths remain 405', async () => {

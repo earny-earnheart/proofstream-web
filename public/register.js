@@ -18,6 +18,14 @@ const AUTH_ERRORS = {
 const authError = new URLSearchParams(location.search).get('auth');
 if (AUTH_ERRORS[authError]) error.textContent = AUTH_ERRORS[authError];
 
+// From the landing page: ?mode=signin opens the sign-in tab; ?start=project opens the New
+// project dialog once the account is ready.
+const params = new URLSearchParams(location.search);
+const DESTINATION = params.get('start') === 'project' ? '/#new-project' : '/';
+// Google sign-in returns to / on its own, so remember the request for this tab as well.
+if (params.get('start') === 'project') { try { sessionStorage.setItem('ps-start-project', '1'); } catch {} }
+if (params.get('mode') === 'signin') mode = 'signin';
+
 const ENDPOINTS = { create: '/api/register', signin: '/api/login', forgot: '/api/password/forgot' };
 
 function setMode(next) {
@@ -45,7 +53,7 @@ document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click'
 forgot.addEventListener('click', () => { error.textContent = ''; setMode('forgot'); });
 
 fetch('/api/session', { credentials: 'same-origin' }).then(r => r.json()).then(s => {
-  if (s.registered) location.replace('/');
+  if (s.registered) location.replace(DESTINATION);
   document.getElementById('google-sign-in').hidden = !s.googleSignIn;
   document.getElementById('register-divider').hidden = !s.googleSignIn;
   emailLinks = Boolean(s.emailLinks);
@@ -83,7 +91,7 @@ form.addEventListener('submit', async e => {
       if (window.turnstile) window.turnstile.reset();
       return;
     }
-    location.replace('/');
+    location.replace(DESTINATION);
   } catch (err) {
     error.textContent = err.message;
     // Turnstile tokens work once; get a fresh one for the next attempt.

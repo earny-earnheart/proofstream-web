@@ -33,11 +33,16 @@ fetch_url() {
 }
 header_matches() { grep -Eiq "$1" "$HEADERS"; }
 
-# Without a session cookie, / must show the registration page, never the workspace.
-if fetch_url "$ORIGIN/" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Sign in</title>' "$BODY" \
-    && grep -Fq 'id="register-form"' "$BODY"; then
-  report PASS 'Homepage registration gate: unregistered visitors see the sign-up form'
+# Without a session cookie, / must show the public landing page, never the workspace.
+if fetch_url "$ORIGIN/" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Keep the proof of your creative work</title>' "$BODY" \
+    && grep -Fq 'href="/register?start=project"' "$BODY" && ! grep -Fq 'app.js' "$BODY"; then
+  report PASS 'Homepage registration gate: unregistered visitors see the public landing page'
 else report FAIL "Homepage registration gate (HTTP $STATUS)"; fi
+
+if fetch_url "$ORIGIN/register" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Sign in</title>' "$BODY" \
+    && grep -Fq 'id="register-form"' "$BODY"; then
+  report PASS 'Sign-up page: /register shows the sign-up form'
+else report FAIL "Sign-up page (HTTP $STATUS)"; fi
 
 if header_matches '^strict-transport-security:[[:space:]]*max-age=31536000; includeSubDomains[[:space:]]*$' \
     && header_matches '^content-security-policy:' \

@@ -16,7 +16,8 @@ if (url.hostname.endsWith('.workers.dev') && process.env.MOCK_NETWORK_FAILURE ==
 let status = 200, type = 'text/html; charset=utf-8';
 let body = '<title>ProofStream — Sign in</title><form id="register-form">';
 let extras = '';
-if (url.pathname === '/' && process.env.MOCK_UNGATED === '1') body = '<title>ProofStream — Your work. Your timeline.</title>';
+if (url.pathname === '/') body = '<title>ProofStream — Keep the proof of your creative work</title><a href="/register?start=project">';
+if (url.pathname === '/' && process.env.MOCK_UNGATED === '1') body = '<title>ProofStream — Your work. Your timeline.</title><script src="app.js"></script>';
 if (url.hostname.startsWith('www.')) {
  status = 301; extras = 'location: https://proofstreamapp.com' + url.pathname + url.search + '\\r\\nx-robots-tag: noindex, nofollow\\r\\n';
 } else if (url.hostname.endsWith('.workers.dev')) { status = 404; body = 'Not found'; }
