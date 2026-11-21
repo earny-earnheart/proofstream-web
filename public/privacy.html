@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#13667c"><title>Privacy Policy — ProofStream</title><meta name="description" content="How ProofStream collects, uses, stores and protects your information. Your files are fingerprinted on your device and never uploaded."><link rel="canonical" href="https://proofstreamapp.com/privacy"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="alternate icon" href="/favicon.ico"><link rel="stylesheet" href="/styles.css"></head><body class="landing-body">
+<a class="skip" href="#privacy-main">Skip to content</a>
+<header class="landing-top">
+<a href="/" class="brand"><img class="brand-logo" src="/logo.jpg" alt="ProofStream" width="184" height="44"></a>
+<nav class="landing-nav" aria-label="Site"><a href="/#how">How it works</a><a href="/register?mode=signin">Sign in</a></nav>
+<a class="primary landing-cta" href="/register?start=project">Start a project ↗</a>
+</header>
+<main id="privacy-main" class="landing-main legal">
+<span class="eyebrow">PROOFSTREAM · LEGAL</span>
+<h1>Privacy Policy</h1>
+<p class="legal-meta">Effective November 21, 2026 · Last updated November 21, 2026</p>
+
+<p>ProofStream (“ProofStream,” “we,” “us”) is a product of Pantheon Consulting Group, Inc., a Wyoming corporation. This policy explains what information we collect when you use proofstreamapp.com and its services (the “Service”), how we use it, who we share it with, and the choices you have. The short version: <strong>your files never leave your device</strong>. We store only what we need to run your account and keep your records.</p>
+
+<nav class="legal-toc" aria-label="On this page"><ol>
+<li><a href="#files">Your files stay on your device</a></li>
+<li><a href="#collect">Information we collect</a></li>
+<li><a href="#use">How we use information</a></li>
+<li><a href="#chain">Public blockchain records</a></li>
+<li><a href="#cookies">Cookies and local storage</a></li>
+<li><a href="#share">Service providers and sharing</a></li>
+<li><a href="#retain">Retention and deletion</a></li>
+<li><a href="#security">Security</a></li>
+<li><a href="#rights">Your choices and rights</a></li>
+<li><a href="#children">Children</a></li>
+<li><a href="#transfers">Where data is processed</a></li>
+<li><a href="#changes">Changes to this policy</a></li>
+<li><a href="#contact">Contact</a></li>
+</ol></nav>
+
+<section id="files"><h2>1. Your files stay on your device</h2>
+<p>When you fingerprint a draft, audio file or other work, your browser computes a SHA-256 hash of the file locally. The file itself is never uploaded to ProofStream. We receive only the resulting fingerprint (a fixed-length string that cannot be turned back into your file) and the descriptive details you choose to enter. When you request verification of a claim, you submit hashes of your evidence, not the documents themselves.</p></section>
+
+<section id="collect"><h2>2. Information we collect</h2>
+<h3>Information you give us</h3>
+<ul>
+<li><strong>Account details:</strong> your name and email address. If you sign up with a password, we store only a salted PBKDF2-SHA256 hash of it, never the password itself.</li>
+<li><strong>Google sign-in (optional):</strong> if you choose “Continue with Google,” Google shares your email address, name and a unique account identifier with us, and tells us whether Google has verified the email. We do not receive your Google password or access to your Google files, contacts or calendar.</li>
+<li><strong>Projects and milestones:</strong> project names, descriptions, disciplines, milestone titles, dates and file fingerprints you record in your workspace.</li>
+<li><strong>Recording and rights claims:</strong> ISRC codes, titles, version titles, artist names, durations, audio fingerprints, related ISRCs, rights roles, IPI numbers, split percentages, territories and the reasons you give for each version of a claim, plus evidence hashes you submit with a verification request.</li>
+<li><strong>Wallet address (optional):</strong> if you connect a MetaMask-compatible wallet, your browser shares your public wallet address so it can identify you as the creator of a local record. We never request or receive private keys or seed phrases.</li>
+<li><strong>Messages:</strong> anything you send us by email.</li>
+</ul>
+<h3>Information collected automatically</h3>
+<ul>
+<li><strong>Technical data:</strong> the browser user-agent string recorded when your account is created, and the IP address and request details that every web request carries. Our hosting provider processes this data to deliver the site and defend it against abuse.</li>
+<li><strong>Bot protection:</strong> sign-up and password sign-in use Cloudflare Turnstile. To confirm you are human, Turnstile evaluates signals from your browser, and we pass your IP address to Cloudflare with the check.</li>
+<li><strong>Session data:</strong> a signed session cookie that keeps you signed in (see <a href="#cookies">Cookies</a>).</li>
+</ul>
+<p>We do <strong>not</strong> use advertising trackers, build analytics profiles or load third-party analytics scripts.</p></section>
+
+<section id="use"><h2>3. How we use information</h2>
+<ul>
+<li>To create and secure your account, sign you in, and send transactional emails such as address confirmation and password reset links.</li>
+<li>To store and sync your projects, milestones and claims across your devices.</li>
+<li>To review verification requests and to anchor verified claims on a public blockchain (see below).</li>
+<li>To show public verification results: anyone who checks an ISRC or fingerprint may see whether a matching claim exists, its status and its on-chain anchor.</li>
+<li>To detect, prevent and respond to fraud, abuse, competing claims, security incidents and violations of our terms.</li>
+<li>To maintain and improve the Service, and to comply with legal obligations and lawful requests.</li>
+</ul>
+<p>We do not sell your personal information and do not share it for cross-context behavioral advertising.</p></section>
+
+<section id="chain"><h2>4. Public blockchain records</h2>
+<p>When a ProofStream administrator verifies a version of a recording claim, the Service writes a cryptographic hash of that claim’s canonical record to a public blockchain smart contract (the ProofStreamRegistry). Blockchain records are public, permanent and replicated worldwide by independent parties. <strong>Once a hash is anchored, neither we nor anyone else can change or delete it.</strong> Deleting your account removes your records from our database, but it does not remove anchors already on-chain. Anchors contain hashes, not your name or email; however, anyone holding the matching canonical record can confirm it against the anchor. If you do not want a claim anchored, do not request its verification.</p></section>
+
+<section id="cookies"><h2>5. Cookies and local storage</h2>
+<ul>
+<li><strong>ps_session</strong> (essential): a signed, HttpOnly, Secure cookie that keeps you signed in for up to one year or until you sign out. Signing out everywhere invalidates it on the server.</li>
+<li><strong>Google sign-in cookie</strong> (essential, only if you use Google): a short-lived cookie limited to the sign-in flow that protects it against forgery.</li>
+<li><strong>Cloudflare security cookies</strong> (essential): Cloudflare may set cookies needed for bot detection and site security.</li>
+<li><strong>Session storage:</strong> a small browser flag that remembers whether you clicked “Start a project” before signing up. It is cleared when used or when you close the tab.</li>
+</ul>
+<p>We use no advertising or tracking cookies, so there is no cookie banner to dismiss. You can block cookies in your browser, but you will not be able to sign in.</p></section>
+
+<section id="share"><h2>6. Service providers and sharing</h2>
+<p>We share information only as needed to run the Service:</p>
+<ul>
+<li><strong>Cloudflare, Inc.</strong> hosts the site and database (Workers, D1), provides bot protection (Turnstile) and delivers our transactional email.</li>
+<li><strong>Google LLC</strong>, only if you choose Google sign-in.</li>
+<li><strong>Public blockchain networks and RPC node providers</strong>, which receive the claim hashes and transactions described above.</li>
+<li><strong>Pantheon Consulting Group, Inc.</strong> and its personnel who operate and support ProofStream, under confidentiality obligations.</li>
+<li><strong>Legal and safety:</strong> when we believe in good faith that disclosure is required by law, subpoena or court order, or is necessary to protect the rights, property or safety of ProofStream, our users or others.</li>
+<li><strong>Business transfers:</strong> if ProofStream or Pantheon Consulting Group is involved in a merger, acquisition, financing or sale of assets, your information may transfer as part of that transaction, subject to this policy.</li>
+</ul>
+<p>Other ProofStream users never see your email address or your account details. When someone else claims the same ISRC or audio, both claims are marked “contested,” but neither side is shown the other’s details.</p></section>
+
+<section id="retain"><h2>7. Retention and deletion</h2>
+<ul>
+<li>We keep account, project and claim records while your account is active. Claim versions are append-only so the history of each claim stays verifiable.</li>
+<li>Email confirmation and password reset links expire automatically, and we store only a hash of each link.</li>
+<li>When you ask us to delete your account, we delete your registration, and with it your projects, sign-in identities, links and recording claims, from our database. Backups roll off on our provider’s normal schedule.</li>
+<li>We may keep limited records where the law requires it, or to resolve disputes, prevent fraud and enforce our terms.</li>
+<li>On-chain anchors cannot be deleted (see <a href="#chain">Section 4</a>).</li>
+</ul></section>
+
+<section id="security"><h2>8. Security</h2>
+<p>We use HTTPS with HSTS everywhere, a strict Content Security Policy, salted password hashing, signed session cookies that can be revoked server-side, hashed single-use email links and bot protection on sign-in. No system is perfectly secure, so please use a strong, unique password. To report a vulnerability, see our <a href="/.well-known/security.txt">security.txt</a>.</p></section>
+
+<section id="rights"><h2>9. Your choices and rights</h2>
+<p>Wherever you live, you can ask us to:</p>
+<ul>
+<li>tell you what personal information we hold about you and give you a copy;</li>
+<li>correct inaccurate information;</li>
+<li>delete your account and personal information (subject to <a href="#retain">Section 7</a>);</li>
+<li>stop processing that relies on your consent, such as Google sign-in or a connected wallet.</li>
+</ul>
+<p>Residents of California, the EU/EEA, the United Kingdom and other places with privacy laws may have additional rights under those laws, including the right to object to or restrict processing, the right to data portability and the right to complain to a data protection authority. Our legal bases for processing are performing our contract with you, our legitimate interests in running and securing the Service, your consent where we ask for it, and compliance with law. We will not discriminate against you for exercising any of these rights.</p>
+<p>To make a request, email us from the address on your account (see <a href="#contact">Contact</a>). We may need to verify your identity, and we will respond within 30 days, or sooner where the law requires.</p></section>
+
+<section id="children"><h2>10. Children</h2>
+<p>The Service is not directed to children under 13 (or under 16 where local law sets a higher age), and we do not knowingly collect their personal information. If you believe a child has given us information, contact us and we will delete it.</p></section>
+
+<section id="transfers"><h2>11. Where data is processed</h2>
+<p>ProofStream is operated from the United States. Our providers run global networks, so your information may be processed in the United States and other countries whose laws may differ from those where you live. Where the law requires it, we rely on appropriate safeguards for these transfers, such as our providers’ standard contractual clauses.</p></section>
+
+<section id="changes"><h2>12. Changes to this policy</h2>
+<p>We may update this policy as the Service evolves. We will change the “Last updated” date above, and for material changes we will notify you by email or in the app before they take effect. Continuing to use the Service after a change takes effect means the updated policy applies.</p></section>
+
+<section id="contact"><h2>13. Contact</h2>
+<address class="legal-contact">Pantheon Consulting Group, Inc. — ProofStream<br>Attn: Privacy<br>Email: <a href="mailto:support@proofstreamapp.com">support@proofstreamapp.com</a><br>Phone: <a href="tel:+13073570957">(307) 357-0957</a><br>Web: <a href="https://pantheonconsultinggroup.net" rel="noopener noreferrer">pantheonconsultinggroup.net</a></address></section>
+</main>
+<footer class="landing-footer"><span class="company">ProofStream is a product of <a href="https://pantheonconsultinggroup.net" rel="noopener noreferrer">Pantheon Consulting Group, Inc.</a> · Wyoming</span><span>© ProofStream 2026</span><a href="/privacy">Privacy Policy</a><a href="/">Home ↗</a></footer>
+</body></html>
