@@ -35,7 +35,7 @@ header_matches() { grep -Eiq "$1" "$HEADERS"; }
 
 # Without a session cookie, / must show the public landing page, never the workspace.
 if fetch_url "$ORIGIN/" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Keep the proof of your creative work</title>' "$BODY" \
-    && grep -Fq 'href="/register?start=project"' "$BODY" && ! grep -Fq 'app.js' "$BODY"; then
+    && grep -Fq 'id="request-form"' "$BODY" && ! grep -Fq 'app.js' "$BODY"; then
   report PASS 'Homepage registration gate: unregistered visitors see the public landing page'
 else report FAIL "Homepage registration gate (HTTP $STATUS)"; fi
 

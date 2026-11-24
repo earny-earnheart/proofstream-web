@@ -148,7 +148,7 @@ test('emails that belong to a Google account cannot get a password by signing up
 
 test('closed registration refuses new Google accounts but lets existing ones in', async () => {
   const env = await withGoogle({ REGISTRATION_OPEN: 'false' });
-  assert.equal((await googleSignIn(env)).callback.headers.get('location'), '/register?auth=closed');
+  assert.equal((await googleSignIn(env)).callback.headers.get('location'), '/register?auth=invite');
   env.DB.db.prepare("INSERT INTO registrations (id, email, name, created_at) VALUES ('legacy', 'ada@example.com', 'Ada', '2026-10-30')").run();
   const { session } = await googleSignIn(env);
   assert.equal(session.split('=')[1].split('.')[0], 'legacy');

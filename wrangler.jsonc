@@ -12,17 +12,51 @@
     "run_worker_first": true,
     "not_found_handling": "404-page"
   },
-  "send_email": [{ "name": "EMAIL" }],
+  "send_email": [
+    {
+      "name": "EMAIL"
+    }
+  ],
   "vars": {
-    "REGISTRATION_OPEN": "true",
+    "REGISTRATION_OPEN": "false",
     "REGISTRY_ADDRESS": "0xD49e374c9e267823C00a262eAf19fCfb2CaDc17D",
     "CHAIN_ID": "11155111",
-    "CHAIN_RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com"
+    "CHAIN_RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com",
+    "ANCHORING_ENABLED": "false",
+    "PAYWALL_ENABLED": "false",
+    "POLAR_API_BASE": "https://api.polar.sh/v1"
   },
   "ratelimits": [
-    { "name": "LOOKUP_LIMITER", "namespace_id": "7341", "simple": { "limit": 30, "period": 60 } }
+    {
+      "name": "LOOKUP_LIMITER",
+      "namespace_id": "7341",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "AUTH_LIMITER",
+      "namespace_id": "7342",
+      "simple": {
+        "limit": 5,
+        "period": 60
+      }
+    },
+    {
+      "name": "SIGNUP_LIMITER",
+      "namespace_id": "7343",
+      "simple": {
+        "limit": 3,
+        "period": 60
+      }
+    }
   ],
-  "triggers": { "crons": ["*/10 * * * *"] },
+  "triggers": {
+    "crons": [
+      "*/10 * * * *"
+    ]
+  },
   "d1_databases": [
     {
       "binding": "DB",
@@ -32,7 +66,68 @@
     }
   ],
   "routes": [
-    { "pattern": "proofstreamapp.com", "custom_domain": true },
-    { "pattern": "www.proofstreamapp.com", "custom_domain": true }
-  ]
+    {
+      "pattern": "proofstreamapp.com",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.proofstreamapp.com",
+      "custom_domain": true
+    }
+  ],
+  "env": {
+    "staging": {
+      "name": "proofstream-staging",
+      "workers_dev": true,
+      "preview_urls": false,
+      "routes": [],
+      "vars": {
+        "PUBLIC_ORIGIN": "https://proofstream-staging.pantheon-platform.workers.dev",
+        "REGISTRATION_OPEN": "false",
+        "ANCHORING_ENABLED": "false",
+        "PAYWALL_ENABLED": "true",
+        "POLAR_API_BASE": "https://sandbox-api.polar.sh/v1",
+        "REGISTRY_ADDRESS": "0xD49e374c9e267823C00a262eAf19fCfb2CaDc17D",
+        "CHAIN_ID": "11155111",
+        "CHAIN_RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "proofstream-staging",
+          "database_id": "051e33f7-fc2a-4236-909e-6d2dbf477d23",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "ratelimits": [
+        {
+          "name": "LOOKUP_LIMITER",
+          "namespace_id": "7351",
+          "simple": {
+            "limit": 30,
+            "period": 60
+          }
+        },
+        {
+          "name": "AUTH_LIMITER",
+          "namespace_id": "7352",
+          "simple": {
+            "limit": 5,
+            "period": 60
+          }
+        },
+        {
+          "name": "SIGNUP_LIMITER",
+          "namespace_id": "7353",
+          "simple": {
+            "limit": 3,
+            "period": 60
+          }
+        }
+      ],
+      "triggers": {
+        "crons": []
+      }
+    }
+  }
 }

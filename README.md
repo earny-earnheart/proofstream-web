@@ -239,3 +239,46 @@ This is the direct Cloudflare deployment requested in the supplied brief. The Si
 copy remains a separate public demo. Do not apply the earlier Sites A/TXT routing
 instructions to this Worker cutover; the domain owner has configured Cloudflare.
 GitHub preserves this project; a GitHub push alone does not deploy it.
+
+## Private preview, plans and the staging copy
+
+**Invitation only.** `REGISTRATION_OPEN` is `"false"`: new accounts can only be created with an
+email an admin approved. Visitors ask on the landing page (`POST /api/access-request`, Turnstile
+and honeypot checked, one answer for everyone). Admins approve or decline on `/admin`; every
+decision is written to `audit_log`. No email is sent: tell approved people yourself. Existing
+members sign in as before.
+
+**Switches** (all in `wrangler.jsonc` vars): `ANCHORING_ENABLED` (`"false"`: no cron or admin run
+sends a transaction), `PAYWALL_ENABLED` (`"false"` in production until plans launch).
+
+**Rate limits** use the Workers rate limiter (`LOOKUP_LIMITER` 30/min, `AUTH_LIMITER` 5/min,
+`SIGNUP_LIMITER` 3/min, per Cloudflare location). Sessions last 30 days, and signing out ends
+every session of that account.
+
+**Plans.** 14-day trial (starts once the email is confirmed; 3 projects, 25 fingerprints, 5
+recordings, 1 verification), Creator and Pro through Polar (merchant of record). Past a limit the
+API answers 402; when a plan ends the account is read-only, never locked out of its data.
+Polar setup (sandbox first, at sandbox.polar.sh): create the two products, a webhook to
+`<origin>/api/billing/webhook` for `subscription.*` events, and an Organization Access Token with
+`checkouts:write` and `customer_sessions:write`. Then:
+
+```
+npx wrangler secret put POLAR_ACCESS_TOKEN --env staging
+npx wrangler secret put POLAR_WEBHOOK_SECRET --env staging
+```
+
+and put the product ids in `POLAR_PRODUCT_CREATOR` / `POLAR_PRODUCT_PRO` (vars or secrets).
+To give an account free access: `UPDATE subscriptions SET plan = 'comp', status = 'active' WHERE account_id = ?`.
+
+**Staging copy** (`proofstream-staging`, its own D1 `proofstream-staging`, no email, no cron,
+paywall on, Polar sandbox) at https://proofstream-staging.pantheon-platform.workers.dev:
+
+```
+npx wrangler d1 migrations apply proofstream-staging --remote --env staging
+npx wrangler secret put SESSION_SECRET --env staging     # a new random value, not production's
+npx wrangler secret put TURNSTILE_SECRET --env staging
+npx wrangler secret put ADMIN_EMAILS --env staging
+npx wrangler deploy --env staging
+```
+
+Add the staging hostname to the Turnstile widget's allowed hostnames so its forms pass the bot check.

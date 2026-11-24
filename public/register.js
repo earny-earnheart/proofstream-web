@@ -13,6 +13,7 @@ const AUTH_ERRORS = {
   failed: 'Google sign-in did not complete. Please try again.',
   exists: 'An account with this email already exists. Sign in with your email and password.',
   closed: 'New registration is closed right now. Existing creators can still sign in.',
+  invite: 'That Google account is not on the invitation list yet. Request access on the home page, or sign in with an account you already have.',
   unavailable: 'Google sign-in is not available right now. Use your email and password instead.',
 };
 const authError = new URLSearchParams(location.search).get('auth');
@@ -58,7 +59,11 @@ fetch('/api/session', { credentials: 'same-origin' }).then(r => r.json()).then(s
   document.getElementById('register-divider').hidden = !s.googleSignIn;
   emailLinks = Boolean(s.emailLinks);
   setMode(mode);
-  if (!s.registrationOpen) {
+  if (s.invitationOnly) {
+    // Invitation only: approved emails can still create their account here.
+    const note = document.getElementById('invite-note');
+    if (note) note.hidden = false;
+  } else if (!s.registrationOpen) {
     setMode('signin');
     if (!error.textContent) error.textContent = 'New registration is closed right now. Existing creators can still sign in.';
   }

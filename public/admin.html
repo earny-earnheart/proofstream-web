@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#13667c"><meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><title>ProofStream — Verification queue</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="alternate icon" href="/favicon.ico"><link rel="stylesheet" href="/styles.css"></head><body class="register-body">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#13667c"><meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><title>ProofStream — Admin</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="alternate icon" href="/favicon.ico"><link rel="stylesheet" href="/styles.css"></head><body class="register-body">
 <main class="wide admin-shell" id="main">
 <a href="/" class="brand"><img class="brand-logo" src="/logo.jpg" alt="ProofStream" width="184" height="44"></a>
 <div class="page-heading"><div><span class="eyebrow">ADMIN</span><h1>Verification queue</h1><p>Check each claim's evidence before verifying. Verifying a version queues it for anchoring on-chain.</p></div></div>
@@ -8,6 +8,12 @@
 <p class="form-note" id="anchor-result" role="status"></p>
 <p class="form-error" role="alert" id="error"></p>
 <div id="queue" aria-live="polite"><p>Loading…</p></div>
+</div>
+<div class="page-heading"><div><span class="eyebrow">ADMIN</span><h2>Access requests</h2><p>People asking to join the private preview. Approving lets that email create an account; no email is sent, so tell the person yourself.</p></div></div>
+<div class="panel">
+<div class="actions"><button type="button" class="outline-button" data-access-status="pending">Pending</button><button type="button" class="outline-button" data-access-status="approved">Approved</button><button type="button" class="outline-button" data-access-status="declined">Declined</button></div>
+<p class="form-error" role="alert" id="access-error"></p>
+<div id="access-list" aria-live="polite"><p>Loading…</p></div>
 </div>
 <div class="notice">Verification means ProofStream reviewed the evidence for this exact version. It is not a legal determination of ownership. A new version from the creator returns the claim to unverified.</div>
 </main>

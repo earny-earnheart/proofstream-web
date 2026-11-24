@@ -26,7 +26,7 @@ test('a password sign-up returns 201 with a secure session cookie that unlocks t
   assert.equal(response.status, 201);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   const setCookie = response.headers.getSetCookie()[0];
-  for (const flag of ['ps_session=', 'HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/', 'Max-Age=31536000']) assert(setCookie.includes(flag), flag);
+  for (const flag of ['ps_session=', 'HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/', 'Max-Age=2592000']) assert(setCookie.includes(flag), flag);
   const row = account(env, 'ada@example.com');
   assert.equal(row.name, 'Ada');
   assert.match(row.password_hash, /^pbkdf2-sha256\$100000\$[\w-]{22}\$[\w-]{43}$/);
@@ -35,7 +35,7 @@ test('a password sign-up returns 201 with a secure session cookie that unlocks t
   const cookie = cookieOf(response);
   assert.equal(await (await worker.fetch(get('/', cookie), env)).text(), 'asset:/');
   assert.equal((await worker.fetch(get('/app.js', cookie), env)).status, 200);
-  assert.deepEqual(await (await worker.fetch(get('/api/session', cookie), env)).json(), { registered: true, registrationOpen: true, googleSignIn: false, emailLinks: false, emailVerified: false });
+  assert.deepEqual(await (await worker.fetch(get('/api/session', cookie), env)).json(), { registered: true, registrationOpen: true, invitationOnly: false, googleSignIn: false, emailLinks: false, emailVerified: false });
 });
 
 test('an existing email cannot be signed into by signing up again', async () => {
@@ -127,6 +127,11 @@ test('legacy email-only accounts can be claimed with a password once', async () 
   const env = await envWith();
   env.DB.db.prepare("INSERT INTO registrations (id, email, name, created_at) VALUES ('legacy', 'ada@example.com', 'Ada', '2026-10-30')").run();
   env.REGISTRATION_OPEN = 'false';
+  // While ProofStream is invitation only, an old row can only be claimed once its email is approved.
+  const uninvited = await worker.fetch(post('/api/register', { name: 'Ada', email: 'ada@example.com', password: PASSWORD }), env);
+  assert.equal(uninvited.status, 403);
+  assert.equal(env.DB.db.prepare("SELECT password_hash FROM registrations WHERE id = 'legacy'").get().password_hash, null);
+  env.DB.db.prepare("INSERT INTO access_requests (id, email, name, role, status, created_at) VALUES ('req_x', 'ada@example.com', 'Ada', 'Artist', 'approved', '2026-11-24')").run();
   const claimed = await worker.fetch(post('/api/register', { name: 'Ada', email: 'ada@example.com', password: PASSWORD }), env);
   assert.equal(claimed.status, 200);
   assert.equal(cookieOf(claimed).split('=')[1].split('.')[0], 'legacy');
@@ -135,6 +140,7 @@ test('legacy email-only accounts can be claimed with a password once', async () 
 
   // The claim itself re-checks every condition: a verified or Google-linked legacy row
   // (as left by a Google sign-in racing the claim) never gets a password.
+  env.REGISTRATION_OPEN = 'true';
   for (const [id, setup] of [['verified', "UPDATE registrations SET email_verified = 1 WHERE id = 'verified'"],
     ['linked', "INSERT INTO identities VALUES ('google', 'sub-linked', 'linked', 'linked@example.com', '2026-11-03')"]]) {
     env.DB.db.prepare(`INSERT INTO registrations (id, email, name, created_at) VALUES ('${id}', '${id}@example.com', 'X', '2026-10-30')`).run();

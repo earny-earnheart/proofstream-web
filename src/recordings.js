@@ -5,10 +5,15 @@
 // issue them (SoundExchange / IFPI-authorized channels do).
 
 // The chain code (viem) loads only when anchoring runs, not on every request.
+// Anchoring is off unless ANCHORING_ENABLED is "true": no cron run or admin button sends a
+// transaction while it is off.
 export async function runAnchor(env) {
+  if (env.ANCHORING_ENABLED !== 'true') return { skipped: 'Anchoring is switched off.' };
   const [{ runAnchoring }, { chainFromEnv }] = await Promise.all([import('./anchor.js'), import('./chain.js')]);
   return runAnchoring(env, chainFromEnv(env));
 }
+import { checkLimit, entitlements, paymentRequired } from './billing.js';
+
 const MAX_RECORDINGS = 10000;
 const MAX_VERSIONS = 1000;
 const MAX_RIGHTS = 32;          // matches ProofStreamRegistry.MAX_SPLITS
@@ -205,6 +210,8 @@ async function createRecording(request, env, account, json) {
   }
   const { n } = await env.DB.prepare('SELECT COUNT(*) AS n FROM recordings WHERE account_id = ?').bind(account).first();
   if (n >= MAX_RECORDINGS) return problem(json, 409, 'limit', 'Limit reached', 'You have reached the recording limit.');
+  const overPlan = await checkLimit(env, account, 'recordings', n, json);
+  if (overPlan) return overPlan;
 
   const status = 'unverified';
 
@@ -232,6 +239,9 @@ async function createRecording(request, env, account, json) {
 async function addClaim(request, env, account, id, json) {
   const rec = await env.DB.prepare('SELECT * FROM recordings WHERE id = ? AND account_id = ?').bind(id, account).first();
   if (!rec) return problem(json, 404, 'not-found', 'Not found', 'No such recording in your account.');
+  // A new claim version is new work, so it needs an active trial or plan.
+  const ent = await entitlements(env, account);
+  if (ent.paywall && !ent.writable) return paymentRequired(json, ent, 'recordings');
   const key = request.headers.get('idempotency-key');
   if (key !== null && (key.length < 8 || key.length > 100)) return problem(json, 400, 'invalid-request', 'Invalid Idempotency-Key', 'Idempotency-Key must be 8 to 100 characters.');
   if (key) {
@@ -351,6 +361,9 @@ async function requestVerification(request, env, account, id, json) {
   const rec = await env.DB.prepare('SELECT * FROM recordings WHERE id = ? AND account_id = ?').bind(id, account).first();
   if (!rec) return problem(json, 404, 'not-found', 'Not found', 'No such recording in your account.');
   if (rec.status !== 'unverified') return problem(json, 409, 'not-unverified', 'Cannot request verification', `This recording is ${rec.status}.`);
+  const { n: asked } = await env.DB.prepare('SELECT COUNT(*) AS n FROM recordings WHERE account_id = ? AND (verification_requested_at IS NOT NULL OR verified_at IS NOT NULL)').bind(account).first();
+  const overPlan = await checkLimit(env, account, 'verifications', asked, json);
+  if (overPlan) return overPlan;
   const body = await readJson(request);
   const evidence = Array.isArray(body?.evidence_hashes) ? body.evidence_hashes.map(h => typeof h === 'string' ? h.toLowerCase().replace(/^(sha256:|0x)/, '') : '') : null;
   if (!evidence || evidence.length < 1 || evidence.length > MAX_EVIDENCE || !evidence.every(h => HASH.test(h))) {
