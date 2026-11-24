@@ -24,6 +24,7 @@ if (url.hostname.startsWith('www.')) {
 else if (get('--request') === 'POST') { status = 405; extras = 'allow: GET, HEAD\\r\\n'; }
 else if (url.pathname === '/robots.txt') { type = 'text/plain'; body = 'Sitemap: https://proofstreamapp.com/sitemap.xml'; }
 else if (url.pathname === '/sitemap.xml') { type = 'application/xml'; body = '<loc>https://proofstreamapp.com/</loc>'; }
+else if (url.pathname === '/privacy') body = '<title>Privacy Policy — ProofStream</title><link rel="canonical" href="https://proofstreamapp.com/privacy">';
 else if (url.pathname === '/.well-known/security.txt') { type = 'text/plain'; body = 'Contact: mailto:pantheonconsultinggroup@gmail.com'; }
 else if (url.pathname === '/health') { type = 'application/json'; body = JSON.stringify({ status: 'ok', service: 'proofstream-web', time: new Date().toISOString() }); extras = 'cache-control: no-store\\r\\n'; }
 else if (url.pathname === '/definitely-not-a-page') { status = process.env.MOCK_SOFT_404 === '1' ? 200 : 404; body = '<meta name="robots" content="noindex">'; }
