@@ -40,15 +40,25 @@ function setMode(next) {
     b.classList.toggle('selected', b.dataset.mode === mode);
     b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
   });
-  document.getElementById('register-title').textContent = creating ? 'Create your account.' : forgetting ? 'Reset your password.' : 'Welcome back.';
+  const copy = forgetting
+    ? ['Reset your password.', 'We\u2019ll email a link to the address on your account.', 'Reset your password \u2014 ProofStream']
+    : creating
+      ? (params.get('start') === 'project'
+        ? ['Create a free account.', 'Your first project opens next. Files stay on your device.', 'Create your account \u2014 ProofStream']
+        : ['Create your account.', 'Files you fingerprint stay on your device.', 'Create your account \u2014 ProofStream'])
+      : ['Welcome back.', 'Sign in with Google or your email.', 'Sign in \u2014 ProofStream'];
+  document.getElementById('register-title').textContent = copy[0];
+  document.getElementById('register-subline').textContent = copy[1];
+  document.title = copy[2];
   document.getElementById('name-field').hidden = !creating;
   document.getElementById('password-note').hidden = !creating;
   name.required = creating;
   password.autocomplete = creating ? 'new-password' : 'current-password';
   password.minLength = creating ? 10 : 1;
   form.action = ENDPOINTS[mode];
-  button.textContent = creating ? 'Create account ↗' : forgetting ? 'Email me a reset link ↗' : 'Sign in ↗';
+  button.textContent = creating ? 'Create account' : forgetting ? 'Email me a reset link' : 'Sign in';
 }
+setMode(mode);
 document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { error.textContent = ''; setMode(b.dataset.mode); }));
 forgot.addEventListener('click', () => { error.textContent = ''; setMode('forgot'); });
 
