@@ -49,3 +49,5 @@ fieldset.rights{border:1px solid #e3e9eb;border-radius:8px;padding:12px 14px;mar
 @media(max-width:900px){.landing-nav{display:none}.landing-cta{margin-left:auto;padding:9px 12px}.landing-steps,.landing-music{grid-template-columns:1fr;gap:18px}.landing-hero{grid-template-columns:1fr}}
 @media(max-width:900px){.landing-nav{display:flex;margin-left:auto;gap:0}.landing-nav a:not([href^="/register"]){display:none}.landing-cta{margin-left:12px}.landing-top{gap:10px}}
 .landing-nav a,.landing-cta{white-space:nowrap}@media(max-width:420px){.landing-top .brand-logo{height:30px}.landing-cta{font-size:11px;padding:8px 10px}}
+
+.landing-film{text-align:left}.film-video{display:block;width:100%;aspect-ratio:16/9;height:auto;border-radius:14px;background:#0b1f33;border:1px solid var(--line);box-shadow:0 18px 40px rgba(15,94,115,.14)}.film-note{color:var(--muted);font-size:12px;margin:12px 0 0}
