@@ -1,4 +1,6 @@
 import { recordingsApi, isAdmin, runAnchor } from './recordings.js';
+import { mayCreateAccount, storeAccessRequest, accessAdminApi } from './access.js';
+import { entitlements, checkLimit, startCheckout, customerPortal, polarWebhook, PLANS, TRIAL_DAYS } from './billing.js';
 
 // ProofStream's thin Cloudflare Workers Static Assets front controller.
 // The only routes configured for production are the apex and www custom domains.
@@ -8,8 +10,11 @@ const CANONICAL_ORIGIN = 'https://' + CANONICAL_HOST;
 // Registration gate: the workspace shell and its script require a signed cookie.
 // Renamed from ps_reg: cookies issued by the old email-only sign-up are no longer accepted.
 const COOKIE_NAME = 'ps_session';
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+// Sessions last 30 days. Signing out ends every session for the account (see logout).
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 const GATED_PATHS = new Set(['/', '/index.html', '/app.js']);
+// Member-only pages: signed-out visitors are sent to sign in.
+const MEMBER_PAGES = new Map([['/account/billing', '/billing']]);
 // Signed-out visitors to the homepage get the public landing page; sign-up lives at /register.
 const LANDING_PAGE = '/landing';
 const REGISTER_PAGE = '/register';
@@ -82,6 +87,16 @@ function sameString(a, b) {
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
 }
+
+// Cloudflare's Workers rate limiter: approximate and counted per Cloudflare location. A
+// missing binding allows the request, so tests and setups without the binding still work.
+async function allowed(env, binding, key) {
+  const limiter = env[binding];
+  if (!limiter || typeof limiter.limit !== 'function') return true;
+  try { return (await limiter.limit({ key })).success !== false; } catch { return true; }
+}
+const clientIp = request => request.headers.get('cf-connecting-ip') || 'unknown';
+const tooMany = () => json({ error: 'Too many attempts. Wait a minute and try again.' }, 429, { 'retry-after': '60', 'cache-control': 'no-store' });
 
 function readCookie(request, name) {
   for (const part of (request.headers.get('cookie') || '').split(';')) {
@@ -210,8 +225,11 @@ async function register(request, env) {
   const taken = json({ error: 'An account with this email already exists. Sign in instead.' }, 409);
   const existing = await env.DB.prepare('SELECT id, password_hash, (SELECT COUNT(*) FROM identities WHERE account_id = registrations.id) AS linked FROM registrations WHERE email = ?')
     .bind(email).first();
+  const notInvited = json({ error: 'ProofStream is invitation only. Request access on the home page, or use the email your invitation went to.' }, 403);
   if (existing) {
     if (existing.password_hash || existing.linked) return taken;
+    // An old email-only registration can only be claimed by someone who has been let in.
+    if (!(await mayCreateAccount(env, email))) return notInvited;
     // The UPDATE re-checks every condition, so a Google sign-in that verifies or links
     // this account between the SELECT above and here wins and no password is set.
     const claimed = await env.DB.prepare('UPDATE registrations SET password_hash = ?, session_version = session_version + 1 WHERE id = ? AND password_hash IS NULL AND email_verified = 0 AND NOT EXISTS (SELECT 1 FROM identities WHERE account_id = registrations.id) RETURNING session_version')
@@ -220,7 +238,7 @@ async function register(request, env) {
     if (emailEnabled(env)) await sendLink(env, existing.id, email, 'verify');
     return json({ ok: true, returning: true }, 200, { 'set-cookie': await sessionCookie(env, existing.id, claimed.session_version) });
   }
-  if (env.REGISTRATION_OPEN !== 'true') return json({ error: 'Registration is closed right now.' }, 403);
+  if (!(await mayCreateAccount(env, email))) return notInvited;
   const id = crypto.randomUUID();
   const userAgent = (request.headers.get('user-agent') || '').slice(0, 300);
   await env.DB.prepare('INSERT INTO registrations (id, email, name, created_at, user_agent, password_hash) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO NOTHING')
@@ -512,7 +530,7 @@ async function googleCallback(request, env, url) {
     return signedIn(existing.id, verified.results[0].session_version);
   }
 
-  if (env.REGISTRATION_OPEN !== 'true') return authFailed('closed');
+  if (!(await mayCreateAccount(env, profile.email))) return authFailed('invite');
   const account = crypto.randomUUID();
   const userAgent = (request.headers.get('user-agent') || '').slice(0, 300);
   await env.DB.prepare('INSERT INTO registrations (id, email, name, created_at, user_agent, email_verified) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(email) DO NOTHING')
@@ -597,6 +615,18 @@ async function saveProject(request, env, account, id) {
   if (!exists) {
     const { n } = await env.DB.prepare('SELECT COUNT(*) AS n FROM projects WHERE account_id = ?').bind(account).first();
     if (n >= MAX_PROJECTS) return json({ error: 'You have reached the project limit.' }, 409);
+    const overPlan = await checkLimit(env, account, 'projects', n, json);
+    if (overPlan) return overPlan;
+  }
+  // New fingerprints count against the plan; re-saving existing ones never does, so a
+  // read-only account can still rename and sync what it already has.
+  const before = new Set(((exists ? JSON.parse(exists.data) : null)?.milestones || []).map(m => m.id));
+  const added = project.milestones.filter(m => !before.has(m.id)).length;
+  if (added > 0) {
+    const { results: all } = await env.DB.prepare('SELECT data FROM projects WHERE account_id = ?').bind(account).all();
+    const total = all.reduce((sum, row) => { try { return sum + (JSON.parse(row.data).milestones || []).length; } catch { return sum; } }, 0);
+    const overPlan = await checkLimit(env, account, 'fingerprints', total + added - 1, json);
+    if (overPlan) return overPlan;
   }
   const now = new Date().toISOString();
   // Timestamps are the server's: a new project or milestone gets the current time, and a
@@ -611,9 +641,58 @@ async function saveProject(request, env, account, id) {
   return json({ ok: true, project }, exists ? 200 : 201);
 }
 
-function logout(request) {
+// Signing out bumps the account's session version, so this cookie and any copy of it,
+// on any device, stop working at once.
+async function logout(request, env) {
   if (request.headers.get('origin') !== CANONICAL_ORIGIN) return json({ error: 'Cross-origin requests are not allowed.' }, 403);
+  const account = await accountId(request, env);
+  if (account) await env.DB.prepare('UPDATE registrations SET session_version = session_version + 1 WHERE id = ?').bind(account).run();
   return json({ ok: true }, 200, { 'set-cookie': `${COOKIE_NAME}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax` });
+}
+
+// The landing page's request form. Same checks as the password forms (origin, honeypot,
+// Turnstile), then one answer for everyone so the form reveals nothing about who asked.
+async function accessRequest(request, env) {
+  const { body, response } = await passwordForm(request, env);
+  if (response) return response;
+  return storeAccessRequest(request, env, body, json);
+}
+
+async function accessAdmin(request, env, url) {
+  const account = await accountId(request, env);
+  const notFound = json({ error: 'Not found.' }, 404);
+  if (!(await isAdmin(env, account))) return notFound;
+  if (request.method === 'POST' && request.headers.get('origin') !== CANONICAL_ORIGIN) return json({ error: 'Cross-origin requests are not allowed.' }, 403);
+  return (await accessAdminApi(request, env, url, account, json)) || notFound;
+}
+
+// The signed-in account's plan, and the two ways into Polar: checkout and the billing portal.
+async function billingApi(request, env, url) {
+  const account = await accountId(request, env);
+  if (!account) return json({ error: 'Sign in first.' }, 401);
+  if (url.pathname === '/api/billing/status' && (request.method === 'GET' || request.method === 'HEAD')) {
+    const ent = await entitlements(env, account);
+    return json({ ...ent, trialDays: TRIAL_DAYS, plans: PLANS }, 200, { 'cache-control': 'no-store' });
+  }
+  if (request.method !== 'POST') return json({ error: 'Not found.' }, 404);
+  if (request.headers.get('origin') !== CANONICAL_ORIGIN) return json({ error: 'Cross-origin requests are not allowed.' }, 403);
+  try {
+    if (url.pathname === '/api/billing/checkout') {
+      const body = await readSubmission(request).catch(() => null);
+      const plan = body?.plan === 'pro' ? 'pro' : body?.plan === 'creator' ? 'creator' : null;
+      if (!plan) return json({ error: 'Choose a plan.' }, 400);
+      const result = await startCheckout(env, account, plan, CANONICAL_ORIGIN, request.headers.get('cf-connecting-ip'));
+      return json(result, result.url ? 200 : 503);
+    }
+    if (url.pathname === '/api/billing/portal') {
+      const result = await customerPortal(env, account, CANONICAL_ORIGIN);
+      return json(result, result.url ? 200 : 503);
+    }
+  } catch (error) {
+    console.error('billing call failed', error?.message);
+    return json({ error: 'Billing is unavailable right now. Please try again shortly.' }, 502);
+  }
+  return json({ error: 'Not found.' }, 404);
 }
 
 async function projectsApi(request, env, url) {
@@ -723,20 +802,28 @@ export default {
       response = new Response(null, { status: 301, headers: { location: url.href } });
     // 2. Sign-up, sign-in, sign-out, email links, project saves and the v1 recordings API are the only writes; everything else is GET/HEAD.
     } else if (url.pathname === '/api/register' && request.method === 'POST') {
-      response = await register(request, env);
+      response = (await allowed(env, 'SIGNUP_LIMITER', 'register:' + clientIp(request))) ? await register(request, env) : tooMany();
     } else if (url.pathname === '/api/login' && request.method === 'POST') {
-      response = await login(request, env);
+      response = (await allowed(env, 'AUTH_LIMITER', 'login:' + clientIp(request))) ? await login(request, env) : tooMany();
     } else if (url.pathname === '/api/password/forgot' && request.method === 'POST') {
-      response = await forgotPassword(request, env);
+      response = (await allowed(env, 'SIGNUP_LIMITER', 'forgot:' + clientIp(request))) ? await forgotPassword(request, env) : tooMany();
     } else if (url.pathname === '/api/password/reset' && request.method === 'POST') {
-      response = await resetPassword(request, env);
+      response = (await allowed(env, 'AUTH_LIMITER', 'reset:' + clientIp(request))) ? await resetPassword(request, env) : tooMany();
+    } else if (url.pathname === '/api/access-request' && request.method === 'POST') {
+      response = (await allowed(env, 'SIGNUP_LIMITER', 'access:' + clientIp(request))) ? await accessRequest(request, env) : tooMany();
+    } else if (url.pathname.startsWith('/api/v1/admin/access-requests')) {
+      response = await accessAdmin(request, env, url);
     } else if ((url.pathname === '/api/email/verify' || url.pathname === '/api/email/resend') && request.method === 'POST') {
       const account = await accountId(request, env);
       if (!account) response = json({ error: 'Sign in first, then open the link again.' }, 401);
       else if (url.pathname === '/api/email/verify') response = await verifyEmail(request, env, account);
       else response = await resendVerification(request, env, account);
     } else if (url.pathname === '/api/logout' && request.method === 'POST') {
-      response = logout(request);
+      response = await logout(request, env);
+    } else if (url.pathname === '/api/billing/webhook' && request.method === 'POST') {
+      response = await polarWebhook(request, env, json);
+    } else if (url.pathname.startsWith('/api/billing/')) {
+      response = await billingApi(request, env, url);
     } else if (url.pathname === '/api/projects' || url.pathname.startsWith('/api/projects/')) {
       response = await projectsApi(request, env, url);
     } else if (url.pathname.startsWith('/api/v1/')) {
@@ -757,6 +844,7 @@ export default {
       response = json({
         registered: Boolean(account),
         registrationOpen: env.REGISTRATION_OPEN === 'true',
+        invitationOnly: env.REGISTRATION_OPEN !== 'true',
         googleSignIn: googleEnabled(env),
         emailLinks: emailEnabled(env),
         ...(account ? { emailVerified: verified } : {}),
@@ -775,6 +863,10 @@ export default {
       url.pathname = url.pathname.replace(/\/+$/, '') || '/';
       response = new Response(null, { status: 301, headers: { location: url.href } });
     // 5. The workspace needs a registration; unregistered visitors get the public landing page.
+    } else if (MEMBER_PAGES.has(url.pathname)) {
+      response = (await isRegistered(request, env))
+        ? privateResponse(await serveAsset(request, env, MEMBER_PAGES.get(url.pathname)))
+        : redirect(REGISTER_PAGE + '?mode=signin');
     } else if (GATED_PATHS.has(url.pathname)) {
       if (await isRegistered(request, env)) {
         response = privateResponse(await serveAsset(request, env));
