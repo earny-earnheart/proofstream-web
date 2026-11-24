@@ -119,6 +119,11 @@ if fetch_url "$ORIGIN/example-path/?x=1" && [[ "$STATUS" == 301 ]] \
   report PASS 'Trailing slash redirect preserves query'
 else report FAIL "Trailing slash redirect (HTTP $STATUS)"; fi
 
+if fetch_url "$ORIGIN/privacy" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>Privacy Policy — ProofStream</title>' "$BODY" \
+    && grep -Fq 'href="https://proofstreamapp.com/privacy"' "$BODY"; then
+  report PASS 'Privacy policy: /privacy is public'
+else report FAIL "Privacy policy page (HTTP $STATUS)"; fi
+
 if fetch_url 'https://proofstream-web.pantheon-platform.workers.dev/' && [[ "$STATUS" != 200 ]]; then
   report PASS "workers.dev is not serving the site (HTTP $STATUS)"
 else report FAIL "workers.dev disabled check (HTTP $STATUS; network failures require investigation)"; fi
