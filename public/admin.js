@@ -79,3 +79,35 @@ document.getElementById('anchor-now').addEventListener('click', async e => {
   }
 });
 load();
+
+// ---- Access requests (private preview) ----
+const accessList = document.getElementById('access-list');
+const accessError = document.getElementById('access-error');
+let accessStatus = 'pending';
+
+function accessItem(r) {
+  const when = new Date(r.created_at).toLocaleString();
+  const actions = r.status === 'pending'
+    ? `<div class="actions"><button type="button" class="primary" data-access="approve" data-id="${escapeHTML(r.id)}">Approve</button><button type="button" class="outline-button" data-access="decline" data-id="${escapeHTML(r.id)}">Decline</button></div>`
+    : `<p>${escapeHTML(r.status)} ${r.decided_at ? escapeHTML(new Date(r.decided_at).toLocaleString()) : ''}${r.has_account ? ' · has an account' : ''}</p>`;
+  return `<article class="milestone"><span class="tag">${escapeHTML(r.role)}</span><h3>${escapeHTML(r.name)} — ${escapeHTML(r.email)}</h3><p>Requested ${escapeHTML(when)}</p>${r.note ? `<p>${escapeHTML(r.note)}</p>` : ''}${actions}</article>`;
+}
+
+async function loadAccess() {
+  accessError.textContent = '';
+  document.querySelectorAll('[data-access-status]').forEach(b => b.classList.toggle('selected', b.dataset.accessStatus === accessStatus));
+  try {
+    const { requests } = await call('/api/v1/admin/access-requests?status=' + accessStatus);
+    accessList.innerHTML = requests.length ? requests.map(accessItem).join('') : `<p>No ${accessStatus} requests.</p>`;
+  } catch (e) { accessError.textContent = e.message; accessList.innerHTML = ''; }
+}
+
+document.querySelectorAll('[data-access-status]').forEach(b => b.addEventListener('click', () => { accessStatus = b.dataset.accessStatus; loadAccess(); }));
+accessList.addEventListener('click', async e => {
+  const button = e.target.closest('[data-access]');
+  if (!button) return;
+  button.disabled = true;
+  try { await call(`/api/v1/admin/access-requests/${encodeURIComponent(button.dataset.id)}/${button.dataset.access}`, {}); await loadAccess(); }
+  catch (err) { accessError.textContent = err.message; button.disabled = false; }
+});
+loadAccess();

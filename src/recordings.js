@@ -8,7 +8,7 @@
 // Anchoring is off unless ANCHORING_ENABLED is "true": no cron run or admin button sends a
 // transaction while it is off.
 export async function runAnchor(env) {
-  if (env.ANCHORING_ENABLED !== 'true') return { skipped: true, reason: 'Anchoring is switched off.' };
+  if (env.ANCHORING_ENABLED !== 'true') return { skipped: 'Anchoring is switched off.' };
   const [{ runAnchoring }, { chainFromEnv }] = await Promise.all([import('./anchor.js'), import('./chain.js')]);
   return runAnchoring(env, chainFromEnv(env));
 }

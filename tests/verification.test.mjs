@@ -215,8 +215,20 @@ test('errors are retried, then marked failed after five attempts', async () => {
   assert.equal((await runAnchoring(env, chain)).results.length, 0);
 });
 
+test('anchoring is switched off unless ANCHORING_ENABLED is "true": no cron or admin run sends anything', async () => {
+  const { env, admin } = await setup();
+  delete env.ANCHORING_ENABLED;
+  const { status, body } = await call(env, post(admin, '/api/v1/admin/anchor-now'));
+  assert.equal(status, 200);
+  assert.equal(body.skipped, 'Anchoring is switched off.');
+  const ran = [];
+  await worker.scheduled({}, env, { waitUntil: p => ran.push(p) });
+  await Promise.all(ran);
+});
+
 test('the admin can run anchoring on demand; it reports when not configured', async () => {
   const { env, admin } = await setup();
+  env.ANCHORING_ENABLED = 'true';
   const { status, body } = await call(env, post(admin, '/api/v1/admin/anchor-now'));
   assert.equal(status, 200);
   assert.equal(body.skipped, 'Anchoring is not configured.');

@@ -4,8 +4,15 @@ import { entitlements, checkLimit, startCheckout, customerPortal, polarWebhook, 
 
 // ProofStream's thin Cloudflare Workers Static Assets front controller.
 // The only routes configured for production are the apex and www custom domains.
-const CANONICAL_HOST = 'proofstreamapp.com';
-const CANONICAL_ORIGIN = 'https://' + CANONICAL_HOST;
+// A staging copy sets PUBLIC_ORIGIN (its workers.dev address) so its own forms pass the
+// same-origin checks; production leaves it unset. Google sign-in and email links stay
+// tied to the production address, and staging has neither configured.
+let CANONICAL_HOST = 'proofstreamapp.com';
+let CANONICAL_ORIGIN = 'https://' + CANONICAL_HOST;
+function useOrigin(env) {
+  if (!env.PUBLIC_ORIGIN || env.PUBLIC_ORIGIN === CANONICAL_ORIGIN) return;
+  try { const u = new URL(env.PUBLIC_ORIGIN); if (u.protocol === 'https:') { CANONICAL_HOST = u.host; CANONICAL_ORIGIN = u.origin; } } catch {}
+}
 
 // Registration gate: the workspace shell and its script require a signed cookie.
 // Renamed from ps_reg: cookies issued by the old email-only sign-up are no longer accepted.
@@ -791,6 +798,7 @@ function privateResponse(response) {
 
 export default {
   async fetch(request, env) {
+    useOrigin(env);
     const url = new URL(request.url);
     let response;
 

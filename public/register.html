@@ -7,6 +7,7 @@
 <h1 id="register-title">Create your account.</h1>
 <a class="google-button" id="google-sign-in" href="/auth/google" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.4a4.6 4.6 0 01-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.3z M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0012 22z M6.4 14a6 6 0 010-3.9V7.5H3.1a10 10 0 000 9z M12 6c1.5 0 2.8.5 3.8 1.5l2.9-2.9A10 10 0 003.1 7.5L6.4 10C7.2 7.7 9.4 6 12 6z"/></svg>Continue with Google</a>
 <p class="register-divider" id="register-divider" hidden><span>or use your email</span></p>
+<p class="invite-note" id="invite-note" hidden>ProofStream is invitation only. Approved? Create your account with the email your invitation went to. Not yet a member? <a href="/#request">Request access</a>.</p>
 <div class="mode-switch" role="group" aria-label="Choose how to continue"><button type="button" class="filter selected" aria-pressed="true" data-mode="create">Create account</button><button type="button" class="filter" aria-pressed="false" data-mode="signin">Sign in</button></div>
 <form id="register-form" method="post" action="/api/register" novalidate>
 <label id="name-field">Name<input name="name" id="register-name" autocomplete="name" maxlength="100" required></label>
