@@ -274,7 +274,8 @@ async function addClaim(request, env, account, id, json) {
 async function verify(env, rawIsrc, json) {
   const isrc = canonicalIsrc(rawIsrc);
   if (!isrc) return problem(json, 400, 'invalid-isrc', 'Invalid ISRC', 'Pass a 12-character ISRC such as US-SKG-26-12345.');
-  const cache = { 'cache-control': 'public, max-age=60' };
+  // Lookups are per member now, so shared caches must never keep them.
+  const cache = { 'cache-control': 'private, no-store' };
   const { results } = await env.DB.prepare(
     'SELECT r.*, v.payload, v.payload_hash, v.claim_hash, v.created_at AS recorded_at, v.anchor_status, v.chain_id, v.contract_address, v.tx_hash, v.block_number, v.anchored_at FROM recordings r JOIN recording_versions v ON v.recording_id = r.id AND v.version = r.current_version WHERE r.isrc = ? ORDER BY r.created_at',
   ).bind(isrc).all();
@@ -394,6 +395,11 @@ async function decide(request, env, admin, id, action, json) {
 export async function recordingsApi(request, env, url, { account, json, canonicalOrigin }) {
   const { pathname } = url;
   const method = request.method;
+  // Every route here, the ISRC lookup included, needs a signed-in account. The lookup was
+  // public while ProofStream was being tested; it is now members only.
+  const id = await account();
+  if (!id) return problem(json, 401, 'unauthorized', 'Sign in required', 'Sign in to use the recordings API.');
+
   if (pathname === '/api/v1/verify' && (method === 'GET' || method === 'HEAD')) return verify(env, url.searchParams.get('isrc'), json);
   const verifyMatch = pathname.match(VERIFY_PATH);
   if (verifyMatch && (method === 'GET' || method === 'HEAD')) {
@@ -401,9 +407,6 @@ export async function recordingsApi(request, env, url, { account, json, canonica
     try { isrc = decodeURIComponent(verifyMatch[1]); } catch {}
     return verify(env, isrc, json);
   }
-
-  const id = await account();
-  if (!id) return problem(json, 401, 'unauthorized', 'Sign in required', 'Sign in to use the recordings API.');
   if (method === 'POST' && request.headers.get('origin') !== canonicalOrigin) {
     return problem(json, 403, 'forbidden', 'Cross-origin request', 'Cross-origin writes are not allowed.');
   }

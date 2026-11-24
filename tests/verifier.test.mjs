@@ -30,6 +30,8 @@ else if (url.pathname === '/definitely-not-a-page') { status = process.env.MOCK_
 else if (url.pathname === '/app.js') { status = 403; type = 'text/plain'; body = 'Registration required'; }
 else if (url.pathname === '/api/session') { type = 'application/json'; body = JSON.stringify({ registered: false, registrationOpen: true }); extras = 'cache-control: no-store\\r\\n'; }
 else if (url.pathname === '/api/projects') { status = 401; type = 'application/json'; body = '{"error":"Sign in"}'; extras = 'cache-control: no-store\\r\\n'; }
+else if (url.pathname === '/privacy') { body = '<title>Privacy Policy — ProofStream</title><link rel="canonical" href="https://proofstreamapp.com/privacy">'; }
+else if (url.pathname.startsWith('/api/v1/verify')) { status = process.env.MOCK_PUBLIC_LOOKUP === '1' ? 200 : 401; type = 'application/json'; body = status === 200 ? '{"found":false,"claims":[]}' : '{"status":401,"title":"Sign in required"}'; }
 else if (url.pathname === '/example-path/') { status = 301; extras = 'location: https://proofstreamapp.com/example-path?x=1\\r\\n'; }
 const headers = 'HTTP/2 ' + status + '\\r\\ncontent-type: ' + type + '\\r\\n' + extras +
  'strict-transport-security: max-age=31536000; includeSubDomains\\r\\ncontent-security-policy: default-src self\\r\\nx-frame-options: DENY\\r\\nx-content-type-options: nosniff\\r\\n\\r\\n';

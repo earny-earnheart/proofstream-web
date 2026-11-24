@@ -56,29 +56,50 @@ test('records a recording with a server timestamp and a recomputable hash', asyn
   assert.equal(JSON.parse(stored.payload).recorded_at, body.created_at);
 });
 
-test('public verify lists the claim without sign-in, unverified, and the hash checks out', async () => {
+test('ISRC lookup is members only: anonymous visitors get 401, never claim data', async () => {
   const env = await envWith();
   const cookie = await signUp(env, 'ada@example.com');
   await create(env, cookie);
-  for (const path of ['/api/v1/verify?isrc=US-SKG-26-12345', '/api/v1/verify/usskg2612345']) {
-    const response = await worker.fetch(get(path), env);
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get('cache-control'), 'public, max-age=60');
-    const v = await response.json();
-    assert.equal(v.found, true);
-    assert.equal(v.valid, false);
-    assert.equal(v.status, 'unverified');
-    assert.equal(v.claims.length, 1);
-    assert.equal(v.claims[0].payload_hash, sha(v.claims[0].payload));
-    assert.equal(v.claims[0].anchor.status, 'pending');
-    assert(!JSON.stringify(v).includes('ada@example.com'), 'no account email in public output');
+  for (const path of ['/api/v1/verify?isrc=US-SKG-26-12345', '/api/v1/verify/usskg2612345', '/api/v1/verify/USSKG2699999', '/api/v1/verify/bad', '/api/v1/verify?isrc=nope']) {
+    for (const method of ['GET', 'HEAD']) {
+      const response = await worker.fetch(new Request(origin + path, { method }), env);
+      assert.equal(response.status, 401, `${method} ${path} must refuse anonymous visitors`);
+      if (method === 'GET') {
+        const text = await response.text();
+        assert(!text.includes('Morphine') && !text.includes('payload'), 'no claim data in the refusal');
+      }
+    }
   }
-  const missing = await worker.fetch(get('/api/v1/verify?isrc=USSKG2699999'), env);
+  const forged = await worker.fetch(get('/api/v1/verify/usskg2612345', 'ps_session=forged.value'), env);
+  assert.equal(forged.status, 401, 'a forged cookie is refused too');
+});
+
+test('signed-in lookup lists the claim, unverified, uncached, and the hash checks out', async () => {
+  const env = await envWith();
+  const cookie = await signUp(env, 'ada@example.com');
+  await create(env, cookie);
+  const other = await signUp(env, 'bob@example.com');
+  for (const who of [cookie, other]) {
+    for (const path of ['/api/v1/verify?isrc=US-SKG-26-12345', '/api/v1/verify/usskg2612345']) {
+      const response = await worker.fetch(get(path, who), env);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('cache-control'), 'private, no-store');
+      const v = await response.json();
+      assert.equal(v.found, true);
+      assert.equal(v.valid, false);
+      assert.equal(v.status, 'unverified');
+      assert.equal(v.claims.length, 1);
+      assert.equal(v.claims[0].payload_hash, sha(v.claims[0].payload));
+      assert.equal(v.claims[0].anchor.status, 'pending');
+      assert(!JSON.stringify(v).includes('ada@example.com'), 'no account email in lookup output');
+    }
+  }
+  const missing = await worker.fetch(get('/api/v1/verify?isrc=USSKG2699999', cookie), env);
   assert.equal(missing.status, 404);
   assert.equal((await missing.json()).found, false);
-  assert.equal((await worker.fetch(get('/api/v1/verify?isrc=nope'), env)).status, 400);
-  assert.equal((await worker.fetch(get('/api/v1/verify/bad'), env)).status, 400, 'a bad ISRC is a 400, not a sign-in prompt');
-  assert.equal((await worker.fetch(get('/api/v1/verify/%E0%A4%A'), env)).status, 400);
+  assert.equal((await worker.fetch(get('/api/v1/verify?isrc=nope', cookie), env)).status, 400);
+  assert.equal((await worker.fetch(get('/api/v1/verify/bad', cookie), env)).status, 400);
+  assert.equal((await worker.fetch(get('/api/v1/verify/%E0%A4%A', cookie), env)).status, 400);
 });
 
 test('nobody can squat an ISRC or audio: a second account\'s claim makes both contested', async () => {
@@ -101,14 +122,14 @@ test('nobody can squat an ISRC or audio: a second account\'s claim makes both co
   assert.equal(rivalBody.status, 'unverified');
   assert.equal(rivalBody.contested, true);
   assert.equal((await (await worker.fetch(get(`/api/v1/recordings/${first.recording_id}`, ada), env)).json()).contested, true);
-  const v = await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json();
+  const v = await (await worker.fetch(get('/api/v1/verify/USSKG2612345', bo), env)).json();
   assert.equal(v.status, 'contested');
   assert.equal(v.valid, false);
   assert.equal(v.claim_count, 2);
 
   // Contested is worked out when read, so it clears when the competing claim goes away.
   env.DB.db.prepare("DELETE FROM registrations WHERE email = 'bo@example.com'").run();
-  assert.equal((await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json()).status, 'unverified');
+  assert.equal((await (await worker.fetch(get('/api/v1/verify/USSKG2612345', ada), env)).json()).status, 'unverified');
   assert.equal((await (await worker.fetch(get(`/api/v1/recordings/${first.recording_id}`, ada), env)).json()).contested, false);
 });
 
@@ -132,9 +153,9 @@ test('an unverified claim cannot knock out a verified one, but it is listed', as
   const bo = await signUp(env, 'bo@example.com');
   await create(env, ada);
   env.DB.db.prepare("UPDATE recordings SET status = 'verified'").run();
-  assert.equal((await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json()).valid, true);
+  assert.equal((await (await worker.fetch(get('/api/v1/verify/USSKG2612345', bo), env)).json()).valid, true);
   await create(env, bo, recording({ audio_hash_sha256: audio('e') }));
-  const v = await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json();
+  const v = await (await worker.fetch(get('/api/v1/verify/USSKG2612345', bo), env)).json();
   assert.equal(v.status, 'verified');
   assert.equal(v.valid, true);
   assert.equal(v.unverified_competing_claims, 1);
@@ -142,7 +163,7 @@ test('an unverified claim cannot knock out a verified one, but it is listed', as
 
   // Two verified claims on one ISRC are contested.
   env.DB.db.prepare("UPDATE recordings SET status = 'verified'").run();
-  const both = await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json();
+  const both = await (await worker.fetch(get('/api/v1/verify/USSKG2612345', bo), env)).json();
   assert.equal(both.status, 'contested');
   assert.equal(both.valid, false);
 });
@@ -155,7 +176,7 @@ test('changing a verified claim sends it back to unverified', async () => {
   const rights = [{ role: 'master_owner', split_bps: 5000 }, { role: 'master_owner', split_bps: 5000 }];
   assert.equal((await worker.fetch(post(cookie, `/api/v1/recordings/${id}/claims`, { rights, reason: 'split_correction' }), env)).status, 201);
   assert.equal(env.DB.db.prepare('SELECT status FROM recordings').get().status, 'unverified');
-  assert.equal((await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json()).valid, false);
+  assert.equal((await (await worker.fetch(get('/api/v1/verify/USSKG2612345', cookie), env)).json()).valid, false);
 });
 
 test('one account cannot claim the same ISRC with other audio, or the same audio twice', async () => {
@@ -240,7 +261,7 @@ test('claim updates append versions; the original stays verifiable', async () =>
   const v0 = env.DB.db.prepare('SELECT payload, payload_hash FROM recording_versions WHERE version = 0').get();
   assert.equal(v0.payload_hash, sha(v0.payload));
 
-  const verified = await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json();
+  const verified = await (await worker.fetch(get('/api/v1/verify/USSKG2612345', cookie), env)).json();
   assert.equal(verified.claims[0].record_version, 1);
 });
 
@@ -273,7 +294,7 @@ test('claims freeze while a recording is not active, and other accounts cannot t
 
   env.DB.db.prepare("UPDATE recordings SET status = 'disputed'").run();
   assert.equal((await worker.fetch(post(ada, `/api/v1/recordings/${id}/claims`, body), env)).status, 409);
-  const verified = await (await worker.fetch(get('/api/v1/verify/USSKG2612345'), env)).json();
+  const verified = await (await worker.fetch(get('/api/v1/verify/USSKG2612345', bo), env)).json();
   assert.equal(verified.valid, false);
   assert.equal(verified.status, 'disputed');
 });
