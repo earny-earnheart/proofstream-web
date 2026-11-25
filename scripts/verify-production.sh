@@ -34,12 +34,12 @@ fetch_url() {
 header_matches() { grep -Eiq "$1" "$HEADERS"; }
 
 # Without a session cookie, / must show the public landing page, never the workspace.
-if fetch_url "$ORIGIN/" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Keep the proof of your creative work</title>' "$BODY" \
+if fetch_url "$ORIGIN/" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Fingerprint every draft. Keep the proof.</title>' "$BODY" \
     && grep -Fq 'href="/register?start=project"' "$BODY" && ! grep -Fq 'app.js' "$BODY"; then
   report PASS 'Homepage registration gate: unregistered visitors see the public landing page'
 else report FAIL "Homepage registration gate (HTTP $STATUS)"; fi
 
-if fetch_url "$ORIGIN/register" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>ProofStream — Sign in</title>' "$BODY" \
+if fetch_url "$ORIGIN/register" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>Create your account — ProofStream</title>' "$BODY" \
     && grep -Fq 'id="register-form"' "$BODY"; then
   report PASS 'Sign-up page: /register shows the sign-up form'
 else report FAIL "Sign-up page (HTTP $STATUS)"; fi
@@ -123,6 +123,11 @@ if fetch_url "$ORIGIN/privacy" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>Pri
     && grep -Fq 'href="https://proofstreamapp.com/privacy"' "$BODY"; then
   report PASS 'Privacy policy: /privacy is public'
 else report FAIL "Privacy policy page (HTTP $STATUS)"; fi
+
+if fetch_url "$ORIGIN/terms" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>Terms of Use — ProofStream</title>' "$BODY" \
+    && grep -Fq 'href="https://proofstreamapp.com/terms"' "$BODY"; then
+  report PASS 'Terms of Use: /terms is public'
+else report FAIL "Terms page (HTTP $STATUS)"; fi
 
 if fetch_url "$ORIGIN/api/v1/verify/USZZZ2600001" && [[ "$STATUS" == 401 ]] \
     && ! grep -Fq '"claims"' "$BODY"; then

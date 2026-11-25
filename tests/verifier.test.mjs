@@ -14,9 +14,11 @@ const get = key => args[args.indexOf(key) + 1];
 const url = new URL(args.at(-1));
 if (url.hostname.endsWith('.workers.dev') && process.env.MOCK_NETWORK_FAILURE === '1') process.exit(6);
 let status = 200, type = 'text/html; charset=utf-8';
-let body = '<title>ProofStream — Sign in</title><form id="register-form">';
+let body = '<title>Create your account — ProofStream</title><form id="register-form">';
 let extras = '';
-if (url.pathname === '/') body = '<title>ProofStream — Keep the proof of your creative work</title><a href="/register?start=project">';
+if (url.pathname === '/') body = '<title>ProofStream — Fingerprint every draft. Keep the proof.</title><a href="/register?start=project">';
+if (url.pathname === '/privacy') body = '<title>Privacy Policy — ProofStream</title><link rel="canonical" href="https://proofstreamapp.com/privacy">';
+if (url.pathname === '/terms') body = '<title>Terms of Use — ProofStream</title><link rel="canonical" href="https://proofstreamapp.com/terms">';
 if (url.pathname === '/' && process.env.MOCK_UNGATED === '1') body = '<title>ProofStream — Your work. Your timeline.</title><script src="app.js"></script>';
 if (url.hostname.startsWith('www.')) {
  status = 301; extras = 'location: https://proofstreamapp.com' + url.pathname + url.search + '\\r\\nx-robots-tag: noindex, nofollow\\r\\n';
@@ -30,7 +32,6 @@ else if (url.pathname === '/definitely-not-a-page') { status = process.env.MOCK_
 else if (url.pathname === '/app.js') { status = 403; type = 'text/plain'; body = 'Registration required'; }
 else if (url.pathname === '/api/session') { type = 'application/json'; body = JSON.stringify({ registered: false, registrationOpen: true }); extras = 'cache-control: no-store\\r\\n'; }
 else if (url.pathname === '/api/projects') { status = 401; type = 'application/json'; body = '{"error":"Sign in"}'; extras = 'cache-control: no-store\\r\\n'; }
-else if (url.pathname === '/privacy') { body = '<title>Privacy Policy — ProofStream</title><link rel="canonical" href="https://proofstreamapp.com/privacy">'; }
 else if (url.pathname.startsWith('/api/v1/verify')) { status = process.env.MOCK_PUBLIC_LOOKUP === '1' ? 200 : 401; type = 'application/json'; body = status === 200 ? '{"found":false,"claims":[]}' : '{"status":401,"title":"Sign in required"}'; }
 else if (url.pathname === '/example-path/') { status = 301; extras = 'location: https://proofstreamapp.com/example-path?x=1\\r\\n'; }
 const headers = 'HTTP/2 ' + status + '\\r\\ncontent-type: ' + type + '\\r\\n' + extras +
