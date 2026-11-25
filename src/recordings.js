@@ -30,8 +30,8 @@ const MAX_EVIDENCE = 10;
 const VERIFY_PATH = /^\/api\/v1\/verify\/([^/]{1,40})$/;
 const ERRORS = 'https://proofstreamapp.com/errors/';
 
-const problem = (json, status, slug, title, detail, extra = {}) =>
-  json({ type: ERRORS + slug, title, status, detail, error: detail, ...extra }, status);
+const problem = (json, status, slug, title, detail, extra = {}, headers = {}) =>
+  json({ type: ERRORS + slug, title, status, detail, error: detail, ...extra }, status, headers);
 
 // "US-SKG-26-12345" or "usskg2612345" -> "USSKG2612345", or null if it is not an ISRC.
 export function canonicalIsrc(value) {
@@ -271,14 +271,19 @@ async function addClaim(request, env, account, id, json) {
 // verified claim makes the ISRC valid; unverified claims cannot override it (anyone can file
 // one), but they are listed and counted. Two or more verified claims, or only unverified
 // claims from different accounts, are contested.
+// Member lookup by ISRC. Only verified claims are shown in full; other claims are counted
+// by status so a member can see an ISRC is claimed without seeing what was claimed. IPI
+// numbers are never returned, so the raw payload is not either: members get the rights
+// (role, share, territory) and the payload hash, which is what gets anchored on-chain.
 async function verify(env, rawIsrc, json) {
   const isrc = canonicalIsrc(rawIsrc);
   if (!isrc) return problem(json, 400, 'invalid-isrc', 'Invalid ISRC', 'Pass a 12-character ISRC such as US-SKG-26-12345.');
-  const cache = { 'cache-control': 'public, max-age=60' };
+  // Lookups are per member, so shared caches must never keep them.
+  const cache = { 'cache-control': 'private, no-store' };
   const { results } = await env.DB.prepare(
     'SELECT r.*, v.payload, v.payload_hash, v.claim_hash, v.created_at AS recorded_at, v.anchor_status, v.chain_id, v.contract_address, v.tx_hash, v.block_number, v.anchored_at FROM recordings r JOIN recording_versions v ON v.recording_id = r.id AND v.version = r.current_version WHERE r.isrc = ? ORDER BY r.created_at',
   ).bind(isrc).all();
-  if (!results.length) return json({ found: false, valid: false, isrc: displayIsrc(isrc), claims: [] }, 404, cache);
+  if (!results.length) return json({ found: false, valid: false, isrc: displayIsrc(isrc), claim_count: 0, claims: [] }, 404, cache);
   const live = results.filter(r => r.status !== 'revoked');
   const verified = live.filter(r => r.status === 'verified');
   const status = live.length === 0 ? 'revoked'
@@ -286,18 +291,25 @@ async function verify(env, rawIsrc, json) {
     : verified.length === 1 ? 'verified'
     : live.length > 1 ? 'contested'
     : 'unverified';
+  const count = s => results.filter(r => r.status === s).length;
+  const rightsOf = payload => {
+    try { return (JSON.parse(payload).rights || []).map(x => ({ role: x.role, split_bps: x.split_bps, territory: x.territory })); } catch { return []; }
+  };
   return json({
     found: true,
     valid: status === 'verified',
     isrc: displayIsrc(isrc),
     status,
     claim_count: results.length,
-    unverified_competing_claims: status === 'verified' ? live.length - 1 : undefined,
-    note: status === 'verified' ? (live.length > 1 ? 'One claim is verified by ProofStream; other unverified claims are listed below.' : 'One claim, verified by ProofStream.')
-      : status === 'contested' ? 'More than one account claims this ISRC. No single claim is verified.'
-      : 'Claims are recorded as submitted and are not proof of ownership until verified.',
-    hash_check: 'For each claim, payload_hash = sha256(payload). Verified claims are anchored on-chain; compare payload_hash with the anchor.',
-    claims: results.map(r => ({
+    verified_count: verified.length,
+    other_claims: { unverified: count('unverified'), disputed: count('disputed'), revoked: count('revoked') },
+    note: status === 'verified' ? (live.length > 1 ? 'One claim is verified by ProofStream. Other claims exist and are not verified.' : 'One claim, verified by ProofStream.')
+      : status === 'contested' ? 'More than one account claims this ISRC. No claim is verified.'
+      : status === 'disputed' ? 'A claim on this ISRC is disputed. No details are shown until it is resolved.'
+      : status === 'revoked' ? 'Claims on this ISRC were revoked.'
+      : 'This ISRC has a claim that ProofStream has not verified. Details are shown only once verified.',
+    hash_check: 'payload_hash is the SHA-256 that ProofStream anchors on-chain for a verified claim. Compare it with the anchor transaction.',
+    claims: verified.map(r => ({
       claim_ref: r.id,
       status: r.status,
       title: r.title,
@@ -305,13 +317,21 @@ async function verify(env, rawIsrc, json) {
       artist_display: r.artist,
       record_version: r.current_version,
       registered_at: r.created_at,
-      updated_at: r.updated_at,
-      payload: r.payload,
+      verified_at: r.verified_at,
+      rights: rightsOf(r.payload),
       payload_hash: r.payload_hash,
       claim_hash: r.claim_hash,
       anchor: versionView({ ...r, created_at: r.recorded_at }).anchor,
     })),
   }, 200, cache);
+}
+
+// Lookup rate limits, per member and per network address. Uses Cloudflare's Workers rate
+// limiter (approximate, counted per location); a missing binding allows the request.
+async function lookupAllowed(env, key) {
+  const limiter = env.LOOKUP_LIMITER;
+  if (!limiter || typeof limiter.limit !== 'function') return true;
+  try { return (await limiter.limit({ key })).success !== false; } catch { return true; }
 }
 
 // ---- Verification ----
@@ -394,16 +414,24 @@ async function decide(request, env, admin, id, action, json) {
 export async function recordingsApi(request, env, url, { account, json, canonicalOrigin }) {
   const { pathname } = url;
   const method = request.method;
-  if (pathname === '/api/v1/verify' && (method === 'GET' || method === 'HEAD')) return verify(env, url.searchParams.get('isrc'), json);
+  // Every route here, the ISRC lookup included, needs a signed-in account. The lookup was
+  // public while ProofStream was being tested; it is now members only.
+  const id = await account();
+  if (!id) return problem(json, 401, 'unauthorized', 'Sign in required', 'Sign in to use the recordings API.');
+
   const verifyMatch = pathname.match(VERIFY_PATH);
+  if ((pathname === '/api/v1/verify' || verifyMatch) && (method === 'GET' || method === 'HEAD')) {
+    const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+    if (!(await lookupAllowed(env, 'account:' + id)) || !(await lookupAllowed(env, 'ip:' + ip))) {
+      return problem(json, 429, 'rate-limited', 'Too many lookups', 'Wait a minute, then try again.', {}, { 'retry-after': '60', 'cache-control': 'no-store' });
+    }
+  }
+  if (pathname === '/api/v1/verify' && (method === 'GET' || method === 'HEAD')) return verify(env, url.searchParams.get('isrc'), json);
   if (verifyMatch && (method === 'GET' || method === 'HEAD')) {
     let isrc = null;
     try { isrc = decodeURIComponent(verifyMatch[1]); } catch {}
     return verify(env, isrc, json);
   }
-
-  const id = await account();
-  if (!id) return problem(json, 401, 'unauthorized', 'Sign in required', 'Sign in to use the recordings API.');
   if (method === 'POST' && request.headers.get('origin') !== canonicalOrigin) {
     return problem(json, 403, 'forbidden', 'Cross-origin request', 'Cross-origin writes are not allowed.');
   }
