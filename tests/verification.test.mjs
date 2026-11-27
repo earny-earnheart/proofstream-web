@@ -82,7 +82,7 @@ test('verifying a version queues it for anchoring; a stale version is refused', 
   assert.equal((await call(env, post(admin, `/api/v1/admin/recordings/${id}/verify`, { version: 3 }))).status, 409);
   const ok = await call(env, post(admin, `/api/v1/admin/recordings/${id}/verify`, { version: 0 }));
   assert.equal(ok.status, 200);
-  const v = (await call(env, get('/api/v1/verify/USSKG2612345'))).body;
+  const v = (await call(env, get('/api/v1/verify/USSKG2612345', admin))).body;
   assert.equal(v.valid, true);
   assert.equal(v.claims[0].anchor.status, 'queued');
   assert.equal((await call(env, get(`/api/v1/recordings/${id}`, ada))).body.verification.verified_version, 0);
@@ -142,7 +142,7 @@ test('anchoring registers a verified claim once, and records the transaction', a
   assert.equal(args.payloadHash, row.payload_hash);
   assert.match(row.tx_hash, /^0x[0-9a-f]{64}$/);
   assert.equal(row.chain_id, 11155111);
-  const v = (await call(env, get('/api/v1/verify/USSKG2612345'))).body;
+  const v = (await call(env, get('/api/v1/verify/USSKG2612345', admin))).body;
   assert.equal(v.claims[0].anchor.status, 'anchored');
   assert.equal(v.claims[0].anchor.tx_hash, row.tx_hash);
 

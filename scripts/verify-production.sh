@@ -129,6 +129,11 @@ if fetch_url "$ORIGIN/terms" && [[ "$STATUS" == 200 ]] && grep -Fq '<title>Terms
   report PASS 'Terms of Use: /terms is public'
 else report FAIL "Terms page (HTTP $STATUS)"; fi
 
+if fetch_url "$ORIGIN/api/v1/verify/USZZZ2600001" && [[ "$STATUS" == 401 ]] \
+    && ! grep -Fq '"claims"' "$BODY"; then
+  report PASS 'ISRC lookup refuses anonymous visitors (401)'
+else report FAIL "ISRC lookup must refuse anonymous visitors (HTTP $STATUS)"; fi
+
 if fetch_url 'https://proofstream-web.pantheon-platform.workers.dev/' && [[ "$STATUS" != 200 ]]; then
   report PASS "workers.dev is not serving the site (HTTP $STATUS)"
 else report FAIL "workers.dev disabled check (HTTP $STATUS; network failures require investigation)"; fi

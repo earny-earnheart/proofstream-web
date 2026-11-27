@@ -19,6 +19,9 @@
     "CHAIN_ID": "11155111",
     "CHAIN_RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com"
   },
+  "ratelimits": [
+    { "name": "LOOKUP_LIMITER", "namespace_id": "7341", "simple": { "limit": 30, "period": 60 } }
+  ],
   "triggers": { "crons": ["*/10 * * * *"] },
   "d1_databases": [
     {
