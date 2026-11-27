@@ -84,3 +84,18 @@ test('register copy follows the mode and the start=project landing', () => {
   assert.match(js, /Welcome back\./);
   assert.doesNotMatch(js, /↗/);
 });
+
+test('the launch film plays muted in the hero, with sound and play controls, and the page no longer offers a public lookup', () => {
+  const html = read('public/landing.html');
+  const js = read('public/landing.js');
+  const hero = html.slice(html.indexOf('<section class="hero landing-hero film-hero"'), html.indexOf('</section>'));
+  assert.match(hero, /<video[^>]*id="launch-film"[^>]*autoplay muted loop playsinline/);
+  assert.match(hero, /proofstream-launch-film\.mp4/);
+  assert.match(hero, /class="film-sound"/);
+  assert.match(hero, /class="hero-play"/);
+  assert.match(hero, /That's ProofShark, ProofStream's mascot\./);
+  assert.equal((html.match(/id="launch-film"/g) || []).length, 1, 'the film appears once');
+  assert.doesNotMatch(html, /anyone can look up/);
+  assert.match(js, /getElementById\('launch-film'\)/);
+  assert.match(js, /prefers-reduced-motion/);
+});
