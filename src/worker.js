@@ -1,4 +1,5 @@
 import { recordingsApi, isAdmin, runAnchor } from './recordings.js';
+import { supportApi, supportEnabled, SUPPORT_PATH } from './support.js';
 
 // ProofStream's thin Cloudflare Workers Static Assets front controller.
 // The only routes configured for production are the apex and www custom domains.
@@ -721,7 +722,7 @@ export default {
       url.protocol = 'https:';
       url.port = '';
       response = new Response(null, { status: 301, headers: { location: url.href } });
-    // 2. Sign-up, sign-in, sign-out, email links, project saves and the v1 recordings API are the only writes; everything else is GET/HEAD.
+    // 2. Sign-up, sign-in, sign-out, email links, project saves, the support chat and the v1 recordings API are the only writes; everything else is GET/HEAD.
     } else if (url.pathname === '/api/register' && request.method === 'POST') {
       response = await register(request, env);
     } else if (url.pathname === '/api/login' && request.method === 'POST') {
@@ -739,6 +740,8 @@ export default {
       response = logout(request);
     } else if (url.pathname === '/api/projects' || url.pathname.startsWith('/api/projects/')) {
       response = await projectsApi(request, env, url);
+    } else if (url.pathname === SUPPORT_PATH) {
+      response = await supportApi(request, env, { json, canonicalOrigin: CANONICAL_ORIGIN });
     } else if (url.pathname.startsWith('/api/v1/')) {
       response = await recordingsApi(request, env, url, { account: () => accountId(request, env), json, canonicalOrigin: CANONICAL_ORIGIN });
     } else if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -759,6 +762,7 @@ export default {
         registrationOpen: env.REGISTRATION_OPEN === 'true',
         googleSignIn: googleEnabled(env),
         emailLinks: emailEnabled(env),
+        supportChat: supportEnabled(env),
         ...(account ? { emailVerified: verified } : {}),
       });
     } else if (url.pathname === '/auth/google') {

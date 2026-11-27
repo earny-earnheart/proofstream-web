@@ -15,12 +15,14 @@
   "send_email": [{ "name": "EMAIL" }],
   "vars": {
     "REGISTRATION_OPEN": "true",
+    "SUPPORT_CHAT_ENABLED": "false",
     "REGISTRY_ADDRESS": "0xD49e374c9e267823C00a262eAf19fCfb2CaDc17D",
     "CHAIN_ID": "11155111",
     "CHAIN_RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com"
   },
   "ratelimits": [
-    { "name": "LOOKUP_LIMITER", "namespace_id": "7341", "simple": { "limit": 30, "period": 60 } }
+    { "name": "LOOKUP_LIMITER", "namespace_id": "7341", "simple": { "limit": 30, "period": 60 } },
+    { "name": "SUPPORT_LIMITER", "namespace_id": "7342", "simple": { "limit": 10, "period": 60 } }
   ],
   "triggers": { "crons": ["*/10 * * * *"] },
   "d1_databases": [
