@@ -15,7 +15,7 @@
   "send_email": [{ "name": "EMAIL" }],
   "vars": {
     "REGISTRATION_OPEN": "true",
-    "SUPPORT_CHAT_ENABLED": "false",
+    "SUPPORT_CHAT_ENABLED": "true",
     "REGISTRY_ADDRESS": "0xD49e374c9e267823C00a262eAf19fCfb2CaDc17D",
     "CHAIN_ID": "11155111",
     "CHAIN_RPC_URL": "https://ethereum-sepolia-rpc.publicnode.com"

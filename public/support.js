@@ -1,6 +1,6 @@
 'use strict';
 // Support chat: a "Help" button in the corner that opens a small chat panel. It appears
-// only when the server says the chat is on (/api/session → supportChat). Replies are
+// only when the server says the chat is on (/api/session → supportChat is 'faq' or 'assistant'). Replies are
 // shown with textContent, never as HTML. The conversation lives only in this tab.
 (async () => {
   const EMAIL = 'support@proofstreamapp.com';
@@ -49,7 +49,9 @@
   form.append(input, send);
 
   const foot = el('p', 'support-foot');
-  foot.append('An AI assistant answers from ProofStream\'s FAQ. Don\'t share passwords or personal details. Need a person? ');
+  foot.append(session.supportChat === 'assistant'
+    ? 'An AI assistant answers from ProofStream\'s FAQ. Don\'t share passwords or personal details. Need a person? '
+    : 'Answers come from ProofStream\'s FAQ. Don\'t share passwords or personal details. Need a person? ');
   const mail = el('a', '', EMAIL);
   mail.href = 'mailto:' + EMAIL;
   foot.append(mail);

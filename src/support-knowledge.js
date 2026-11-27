@@ -41,7 +41,7 @@ export const FAQ = [
   {
     q: 'Who is behind ProofStream?',
     a: 'ProofStream is a product of Pantheon Consulting Group, Inc., a Wyoming corporation. The company operates the service from the United States.',
-    keywords: ['who', 'company', 'behind', 'owner', 'pantheon', 'wyoming', 'about'],
+    keywords: ['who', 'who owns', 'who runs', 'who made', 'company', 'behind', 'owner', 'pantheon', 'wyoming', 'about'],
   },
   {
     q: 'How do I delete my data?',
@@ -51,7 +51,7 @@ export const FAQ = [
   {
     q: 'How do I get support?',
     a: `Email ${SUPPORT_EMAIL}.`,
-    keywords: ['support', 'help', 'contact', 'email', 'human', 'person', 'agent', 'talk'],
+    keywords: ['support', 'contact', 'email', 'human', 'person', 'agent', 'talk', 'real person', 'someone'],
   },
   {
     q: 'Do you work with labels and catalogs?',
@@ -60,24 +60,69 @@ export const FAQ = [
   },
 ];
 
-// How the site works, in plain facts. Only what the live site actually does.
+// How the site works, in plain facts. Only what the live site actually does. Same shape
+// as FAQ, so the no-AI fallback can answer how-to questions too.
 export const GUIDE = [
-  ['Creating an account', 'Go to proofstreamapp.com/register, or press "Create a free account" on the homepage. Sign up with Google ("Continue with Google") or with your name, email and a password of at least 10 characters. A quick bot check runs on the form. ProofStream emails a link to confirm your address; confirming keeps the account recoverable.'],
-  ['Signing in', 'Go to proofstreamapp.com/register?mode=signin, or press "Sign in" at the top of the homepage, then use Google or your email and password.'],
-  ['Forgotten password', 'On the sign-in form, press "Forgot your password?" and enter your email. If the account exists, ProofStream emails a link to set a new password. Setting a new password signs you out on every device.'],
-  ['Confirmation email not received', 'Check spam or promotions. In the workspace, a banner offers "Send the link again". If it still does not arrive, email support.'],
-  ['Fingerprinting your music or any file', 'After signing in, create a project (give it a name and pick a discipline: music, design, writing, film or software). Then choose a file: its SHA-256 fingerprint is computed in your browser and saved with the time set by ProofStream\'s server. The file itself never leaves your device. Repeat for each new version to build a timeline.'],
-  ['Checking a file later', 'Drop the same file into the workspace later. If the fingerprint matches, it is byte-for-byte the version you saved.'],
-  ['Exporting your records', 'In a project, use "Export project record" to download a JSON copy of your fingerprints and record details. It does not include your original files.'],
-  ['Recordings, ISRCs and splits', 'In the workspace you can add a recording with an ISRC you already have, its title, artist and duration, and the splits for each rights holder, role and territory. Shares must add up to 100%; territory WW means worldwide. The audio file is fingerprinted on your device, never uploaded (up to 500 MB). Changing splits later creates a new claim version; earlier versions stay on the record.'],
-  ['Verification', 'You can ask ProofStream to verify a recording claim with evidence such as a signed split sheet, a distributor statement or a registrant letter. Each evidence file is fingerprinted on your device and only its fingerprint is sent (1 to 10 files, up to 100 MB each). Keep the originals; ProofStream may ask to see them. A verified claim is anchored on-chain as a hash.'],
-  ['Looking up an ISRC record', 'Looking up the record for an ISRC is for signed-in members and shows verified claims only.'],
-  ['Privacy and terms', 'The Privacy Policy is at proofstreamapp.com/privacy and the Terms of Use are at proofstreamapp.com/terms.'],
+  {
+    q: 'How do I create an account?',
+    a: 'Go to proofstreamapp.com/register, or press "Create a free account" on the homepage. Sign up with Google ("Continue with Google") or with your name, email and a password of at least 10 characters. A quick bot check runs on the form. ProofStream then emails a link to confirm your address; confirming keeps the account recoverable.',
+    keywords: ['sign up', 'signup', 'register', 'registration', 'create', 'account', 'join', 'get access', 'access', 'start', 'get started', 'google'],
+  },
+  {
+    q: 'How do I sign in?',
+    a: 'Go to proofstreamapp.com/register?mode=signin, or press "Sign in" at the top of the homepage, then use Google or your email and password.',
+    keywords: ['sign in', 'signin', 'log in', 'login', 'logon', 'log on'],
+  },
+  {
+    q: 'I forgot my password.',
+    a: 'On the sign-in form, press "Forgot your password?" and enter your email. If the account exists, ProofStream emails a link to set a new password. Setting a new password signs you out on every device.',
+    keywords: ['password', 'forgot', 'reset', 'locked', 'locked out', 'cannot sign in', 'cant sign in'],
+  },
+  {
+    q: 'I did not get the confirmation email.',
+    a: `Check your spam or promotions folder. In the workspace, a banner offers "Send the link again". If it still does not arrive, email ${SUPPORT_EMAIL}.`,
+    keywords: ['confirmation', 'confirm', 'verify email', 'verification email', 'link', 'spam', 'not received', 'didnt get', 'did not get'],
+  },
+  {
+    q: 'How do I fingerprint (hash) my music or other files?',
+    a: 'Sign in, then create a project: give it a name and pick a discipline (music, design, writing, film or software). Choose a file and its SHA-256 fingerprint is computed in your browser and saved with the time set by ProofStream\'s server. The file itself never leaves your device. Repeat for each new version to build a timeline of your work.',
+    keywords: ['how to fingerprint', 'hash my', 'hashing', 'add a file', 'add file', 'my music', 'song', 'songs', 'track', 'tracks', 'mix', 'beat', 'beats', 'project', 'projects', 'version', 'versions', 'timeline'],
+  },
+  {
+    q: 'How do I check a file later?',
+    a: 'Drop the same file into the workspace later. If the fingerprint matches, it is byte-for-byte the version you saved.',
+    keywords: ['check', 'compare', 'same file', 'later', 'prove', 'changed'],
+  },
+  {
+    q: 'How do I export my records?',
+    a: 'In a project, use "Export project record" to download a JSON copy of your fingerprints and record details. It does not include your original files.',
+    keywords: ['export', 'download', 'backup', 'copy', 'json'],
+  },
+  {
+    q: 'How do I add a recording with its ISRC and splits?',
+    a: 'In the workspace, add a recording with an ISRC you already have, its title, artist and duration, and the splits for each rights holder, role and territory. Shares must add up to 100%; territory WW means worldwide. The audio file is fingerprinted on your device, never uploaded (up to 500 MB). Changing splits later creates a new claim version; earlier versions stay on the record.',
+    keywords: ['recording', 'recordings', 'add a recording', 'rights holder', 'royalty split', 'territory', 'percent'],
+  },
+  {
+    q: 'How does verification work?',
+    a: 'You can ask ProofStream to verify a recording claim with evidence such as a signed split sheet, a distributor statement or a registrant letter. Each evidence file is fingerprinted on your device and only its fingerprint is sent (1 to 10 files, up to 100 MB each). Keep the originals; ProofStream may ask to see them. A verified claim is anchored on-chain as a hash.',
+    keywords: ['verify', 'verification', 'verified', 'split sheet', 'distributor statement', 'evidence', 'claim', 'claims'],
+  },
+  {
+    q: 'Can I look up the record for an ISRC?',
+    a: 'Looking up the record for an ISRC is for signed-in members and shows verified claims only.',
+    keywords: ['look up', 'lookup', 'search', 'find'],
+  },
+  {
+    q: 'Where are the Privacy Policy and Terms of Use?',
+    a: 'The Privacy Policy is at proofstreamapp.com/privacy and the Terms of Use are at proofstreamapp.com/terms.',
+    keywords: ['privacy policy', 'terms', 'terms of use', 'tos', 'policy'],
+  },
 ];
 
 // The single block of reference text the assistant answers from.
 export function knowledgeText() {
   const faq = FAQ.map(entry => `Q: ${entry.q}\nA: ${entry.a}`).join('\n\n');
-  const guide = GUIDE.map(([title, body]) => `${title}: ${body}`).join('\n');
+  const guide = GUIDE.map(entry => `${entry.q} ${entry.a}`).join('\n');
   return `# ProofStream FAQ\n\n${faq}\n\n# How to use ProofStream\n\n${guide}\n\n# Contact\n\nSupport email: ${SUPPORT_EMAIL}. Website: https://proofstreamapp.com`;
 }

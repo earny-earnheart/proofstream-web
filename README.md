@@ -185,27 +185,16 @@ records). Without the binding both features switch off (`emailLinks: false` in
 
 A "Help" button in the bottom-right corner of the homepage, sign-up page and workspace opens a small chat. It answers only from ProofStream's own FAQ and how-to text in `src/support-knowledge.js`, and points to support@proofstreamapp.com for anything else. Conversations are not stored by ProofStream.
 
-- **Off until you turn it on.** `SUPPORT_CHAT_ENABLED` is `"false"` in `wrangler.jsonc`; while it is off the button never appears and `/api/support/chat` returns 404.
-- **Two answer modes.** With the `ANTHROPIC_API_KEY` secret set, Claude writes each answer (model `claude-opus-5-5` by default; set the `SUPPORT_MODEL` var to change it, for example `claude-haiku-5-5`). Without the secret, the chat returns the closest FAQ answer with no AI involved.
+- **FAQ-only mode (current).** `SUPPORT_CHAT_ENABLED` is `"true"` and no `ANTHROPIC_API_KEY` secret is set, so each question gets the closest matching FAQ or how-to answer. No AI, no outside service, no cost. Set `SUPPORT_CHAT_ENABLED` to `"false"` and deploy to hide the button again.
+- **Claude mode (later, optional).** Add the `ANTHROPIC_API_KEY` secret and Claude writes each answer from the same text (model `claude-opus-5-5` by default; set the `SUPPORT_MODEL` var to change it). Update the Privacy Policy line first, because messages would then go to Anthropic.
 - **Guards.** Only pages on this site may call the chat (Origin check), 10 messages per minute per visitor (`SUPPORT_LIMITER`), at most 12 turns and 1,000 characters per message, and replies are shown as plain text.
 - **Keep it in step.** When the FAQ on the homepage changes, update `src/support-knowledge.js`; `npm test` fails if a homepage FAQ question is missing from it.
 
-Try it locally before going live (key in `.dev.vars`, which is git-ignored):
+Try it locally:
 
 ```bash
-echo 'ANTHROPIC_API_KEY=sk-ant-...' > .dev.vars
-npx wrangler dev --var SUPPORT_CHAT_ENABLED:true
+npx wrangler dev
 ```
-
-Turn it on in production (after approval):
-
-```bash
-npx wrangler secret put ANTHROPIC_API_KEY
-# then set "SUPPORT_CHAT_ENABLED": "true" in wrangler.jsonc and deploy
-npx wrangler deploy
-```
-
-Set a monthly spend limit for the key in the Anthropic Console so a burst of traffic can't run up the bill.
 
 ## Exact commands (run from this folder)
 

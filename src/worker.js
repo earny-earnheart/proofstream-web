@@ -1,5 +1,5 @@
 import { recordingsApi, isAdmin, runAnchor } from './recordings.js';
-import { supportApi, supportEnabled, SUPPORT_PATH } from './support.js';
+import { supportApi, supportMode, SUPPORT_PATH } from './support.js';
 
 // ProofStream's thin Cloudflare Workers Static Assets front controller.
 // The only routes configured for production are the apex and www custom domains.
@@ -762,7 +762,7 @@ export default {
         registrationOpen: env.REGISTRATION_OPEN === 'true',
         googleSignIn: googleEnabled(env),
         emailLinks: emailEnabled(env),
-        supportChat: supportEnabled(env),
+        supportChat: supportMode(env),
         ...(account ? { emailVerified: verified } : {}),
       });
     } else if (url.pathname === '/auth/google') {

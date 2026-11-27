@@ -5,7 +5,7 @@
 // one, the closest FAQ entry is returned. Either way the chat is off unless
 // SUPPORT_CHAT_ENABLED is "true", and conversations are never stored by ProofStream.
 import Anthropic from '@anthropic-ai/sdk';
-import { FAQ, SUPPORT_EMAIL, knowledgeText } from './support-knowledge.js';
+import { FAQ, GUIDE, SUPPORT_EMAIL, knowledgeText } from './support-knowledge.js';
 
 export const SUPPORT_PATH = '/api/support/chat';
 export const DEFAULT_MODEL = 'claude-opus-5-5';
@@ -66,17 +66,31 @@ export function cleanMessages(body) {
   return { messages: cleaned };
 }
 
-// No-AI fallback: score each FAQ entry by the words it shares with the question.
+const GREETING_REPLY = 'Hi! I can help with signing up, signing in, fingerprinting your music, ISRCs and splits, verification, privacy, and deleting your data. What would you like to know?';
+const GREETING = /^(hi|hey|hello|yo|sup|help|good (morning|afternoon|evening)|hiya|howdy)[\s!.?]*$/;
+
+// No-AI mode: score each how-to and FAQ entry by the words it shares with the question.
+// How-to entries come first, so they win ties ("help me sign up" is about signing up).
 export function faqAnswer(question) {
-  const text = ' ' + question.toLowerCase().replace(/[^a-z0-9\s-]/g, ' ') + ' ';
+  const lower = question.toLowerCase().replace(/[’']/g, '').trim();
+  if (GREETING.test(lower)) return GREETING_REPLY;
+  const text = ' ' + lower.replace(/[^a-z0-9\s-]/g, ' ').replace(/\s+/g, ' ') + ' ';
   let best = null;
   let bestScore = 0;
-  for (const entry of FAQ) {
+  for (const entry of [...GUIDE, ...FAQ]) {
     let score = 0;
-    for (const word of entry.keywords) if (text.includes(' ' + word + ' ') || text.includes(' ' + word + 's ')) score += word.includes(' ') ? 2 : 1;
+    for (const word of entry.keywords) {
+      if (text.includes(' ' + word + ' ') || text.includes(' ' + word + 's ')) score += word.includes(' ') ? 2 : 1;
+    }
     if (score > bestScore) { best = entry; bestScore = score; }
   }
   return best ? best.a : FALLBACK_REPLY;
+}
+
+// Which mode the widget should describe: off, FAQ matching, or the Claude assistant.
+export function supportMode(env) {
+  if (!supportEnabled(env)) return false;
+  return env.ANTHROPIC_API_KEY ? 'assistant' : 'faq';
 }
 
 // Only pages on this site may call the chat, so the API key can't be borrowed by others.

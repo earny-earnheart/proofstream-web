@@ -38,13 +38,16 @@ test('support chat is off by default: 404, and the session tells the widget to s
   const env = await envWith();
   assert.equal((await worker.fetch(chat(ask('Is it free?')), env)).status, 404);
   assert.equal((await (await worker.fetch(get('/api/session'), env)).json()).supportChat, false);
-  const live = await on();
-  assert.equal((await (await worker.fetch(get('/api/session'), live)).json()).supportChat, true);
+  const faq = await on();
+  assert.equal((await (await worker.fetch(get('/api/session'), faq)).json()).supportChat, 'faq');
+  const assistant = await on({ ANTHROPIC_API_KEY: 'sk-test' });
+  assert.equal((await (await worker.fetch(get('/api/session'), assistant)).json()).supportChat, 'assistant');
 });
 
-test('production config keeps the chat switched off and rate limited', () => {
+test('production config turns on the FAQ-only chat, rate limited, with no API key', () => {
   const config = JSON.parse(read('wrangler.jsonc'));
-  assert.equal(config.vars.SUPPORT_CHAT_ENABLED, 'false');
+  assert.equal(config.vars.SUPPORT_CHAT_ENABLED, 'true');
+  assert.equal(config.vars.ANTHROPIC_API_KEY, undefined);
   const limiter = config.ratelimits.find(r => r.name === 'SUPPORT_LIMITER');
   assert.ok(limiter, 'SUPPORT_LIMITER binding');
   assert.notEqual(limiter.namespace_id, config.ratelimits.find(r => r.name === 'LOOKUP_LIMITER').namespace_id);
@@ -158,6 +161,20 @@ test('long messages are trimmed and old turns dropped to keep each request small
   assert.equal(messages.at(-1).content, 'last');
 });
 
+test('FAQ-only mode answers how-to questions about signing up and fingerprinting music', () => {
+  assert.match(faqAnswer('How do I sign up?'), /proofstreamapp\.com\/register/);
+  assert.match(faqAnswer('how do I get access'), /Create a free account/);
+  assert.match(faqAnswer('help me sign up'), /proofstreamapp\.com\/register/);
+  assert.match(faqAnswer('how do I log in'), /mode=signin/);
+  assert.match(faqAnswer('I forgot my password'), /Forgot your password/);
+  assert.match(faqAnswer("I didn't get the confirmation email"), /spam/);
+  assert.match(faqAnswer('how do I hash my music'), /create a project/);
+  assert.match(faqAnswer('how do I export my records'), /Export project record/);
+  assert.match(faqAnswer('how does verification work'), /split sheet/);
+  assert.match(faqAnswer('who owns proofstream'), /Pantheon Consulting Group/);
+  assert.match(faqAnswer('hi'), /What would you like to know/);
+});
+
 test('the FAQ fallback finds the right answer for common questions', () => {
   assert.match(faqAnswer('how much does it cost?'), /preview/);
   assert.match(faqAnswer('do you give out ISRC codes'), /SoundExchange/);
@@ -191,5 +208,6 @@ test('the widget loads on the homepage, sign-up page and workspace and never ren
   const widget = read('public/support.js');
   assert.doesNotMatch(widget, /innerHTML|insertAdjacentHTML|outerHTML|\.style\./);
   assert.match(widget, /supportChat/);
+  assert.match(widget, /Answers come from ProofStream/, 'FAQ-only mode does not claim to be AI');
   assert.match(widget, /textContent/);
 });
