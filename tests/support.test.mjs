@@ -211,3 +211,9 @@ test('the widget loads on the homepage, sign-up page and workspace and never ren
   assert.match(widget, /Answers come from ProofStream/, 'FAQ-only mode does not claim to be AI');
   assert.match(widget, /textContent/);
 });
+
+test('the Privacy Policy describes the Help chat as FAQ-only and not stored', () => {
+  const privacy = read('public/privacy.html');
+  assert.ok(privacy.includes('If you use the Help chat, your questions are used only to find a matching answer and are not stored by ProofStream.'));
+  assert.match(privacy, /Last updated November 27, 2026/);
+});
