@@ -31,7 +31,7 @@ test('sign-up emails a confirmation link; only the hash of its token is stored',
   const stored = env.DB.db.prepare('SELECT * FROM email_tokens').all();
   assert.equal(stored.length, 1);
   assert.notEqual(stored[0].token_hash, token);
-  assert.deepEqual(await session(env, cookie), { registered: true, registrationOpen: true, googleSignIn: false, emailLinks: true, emailVerified: false });
+  assert.deepEqual(await session(env, cookie), { registered: true, registrationOpen: true, googleSignIn: false, emailLinks: true, supportChat: false, emailVerified: false });
 
   const verified = await worker.fetch(send('/api/email/verify', { token }, cookie), env);
   assert.equal(verified.status, 200);

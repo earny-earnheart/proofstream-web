@@ -181,6 +181,21 @@ records). Without the binding both features switch off (`emailLinks: false` in
   stranger's password. `POST /api/email/resend` sends another. Unverified creators see a
   banner in the workspace; nothing is blocked yet.
 
+## Support chat
+
+A "Help" button in the bottom-right corner of the homepage, sign-up page and workspace opens a small chat. It answers only from ProofStream's own FAQ and how-to text in `src/support-knowledge.js`, and points to support@proofstreamapp.com for anything else. Conversations are not stored by ProofStream.
+
+- **FAQ-only mode (current).** `SUPPORT_CHAT_ENABLED` is `"true"` and no `ANTHROPIC_API_KEY` secret is set, so each question gets the closest matching FAQ or how-to answer. No AI, no outside service, no cost. Set `SUPPORT_CHAT_ENABLED` to `"false"` and deploy to hide the button again.
+- **Claude mode (later, optional).** Add the `ANTHROPIC_API_KEY` secret and Claude writes each answer from the same text (model `claude-opus-5-5` by default; set the `SUPPORT_MODEL` var to change it). Update the Privacy Policy line first, because messages would then go to Anthropic.
+- **Guards.** Only pages on this site may call the chat (Origin check), 10 messages per minute per visitor (`SUPPORT_LIMITER`), at most 12 turns and 1,000 characters per message, and replies are shown as plain text.
+- **Keep it in step.** When the FAQ on the homepage changes, update `src/support-knowledge.js`; `npm test` fails if a homepage FAQ question is missing from it.
+
+Try it locally:
+
+```bash
+npx wrangler dev
+```
+
 ## Exact commands (run from this folder)
 
 1. Check the files/tests locally:

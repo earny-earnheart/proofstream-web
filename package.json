@@ -12,6 +12,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.14.0",
     "viem": "2.57.13"
   }
 }
